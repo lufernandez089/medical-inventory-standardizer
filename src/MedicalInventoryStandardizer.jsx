@@ -104,27 +104,10 @@ const MedicalInventoryStandardizer = () => {
         setIsLoading(true);
         setLoadError(null);
         
-        // Check environment variables first
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-        
-        if (!supabaseUrl || !supabaseKey) {
-          console.warn('Supabase environment variables missing');
-          setSupabaseStatus({
-            configured: false,
-            canWrite: false
-          });
-          // Fallback to hardcoded defaults
-          setNomenclatureSystems(defaultSystems);
-          setReferenceDB(defaultData);
-          setIsLoading(false);
-          return;
-        }
-        
         // Check Supabase configuration and connectivity
         const connectivityTest = await canWriteToSupabase();
         setSupabaseStatus({
-          configured: true,
+          configured: !connectivityTest.error?.includes('environment variables missing'),
           canWrite: connectivityTest.canWrite
         });
         
@@ -922,15 +905,19 @@ const MedicalInventoryStandardizer = () => {
       <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
         {/* Environment Variable Warning Banner */}
         {!supabaseStatus.configured && (
-          <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4">
+          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4">
             <div className="flex items-start gap-3">
-              <AlertCircle className="text-red-600 mt-1" size={20} />
+              <AlertCircle className="text-yellow-600 mt-1" size={20} />
               <div>
-                <h3 className="text-red-800 font-semibold">Supabase Environment Variables Missing (Preview/Prod)</h3>
-                <p className="text-red-700 text-sm mt-1">
-                  Database persistence is disabled. Create a <code className="bg-red-100 px-1 rounded">.env</code> file with 
+                <h3 className="text-yellow-800 font-semibold">Supabase Environment Variables Missing</h3>
+                <p className="text-yellow-700 text-sm mt-1">
+                  Database persistence is disabled. Create a <code className="bg-yellow-100 px-1 rounded">.env</code> file with 
                   <code className="bg-red-100 px-1 rounded">VITE_SUPABASE_URL</code> and 
-                  <code className="bg-red-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to enable data persistence.
+                  <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to enable data persistence.
+                </p>
+              </div>
+            </div>
+          </div>
                 </p>
               </div>
             </div>
