@@ -41,7 +41,10 @@ export const loadCatalog = async () => {
       `)
       .order('name');
 
-    if (systemsError) throw systemsError;
+    if (systemsError) {
+      logSupabaseError('loadCatalog - systems', systemsError);
+      throw new Error(`Load systems error: ${systemsError.message} ${systemsError.details ?? ''}`);
+    }
 
     // Load reference database terms
     const { data: manufacturers, error: manufacturersError } = await supabase
@@ -50,7 +53,10 @@ export const loadCatalog = async () => {
       .eq('field', 'Manufacturer')
       .order('standard');
 
-    if (manufacturersError) throw manufacturersError;
+    if (manufacturersError) {
+      logSupabaseError('loadCatalog - manufacturers', manufacturersError);
+      throw new Error(`Load manufacturers error: ${manufacturersError.message} ${manufacturersError.details ?? ''}`);
+    }
 
     const { data: models, error: modelsError } = await supabase
       .from('reference_terms')
@@ -58,7 +64,10 @@ export const loadCatalog = async () => {
       .eq('field', 'Model')
       .order('standard');
 
-    if (modelsError) throw modelsError;
+    if (modelsError) {
+      logSupabaseError('loadCatalog - models', modelsError);
+      throw new Error(`Load models error: ${modelsError.message} ${modelsError.details ?? ''}`);
+    }
 
     // Transform data to match expected format
     const nomenclatureSystems = systems?.map(system => ({
@@ -141,7 +150,7 @@ export const upsertDeviceTypeTerm = async (systemId, standard, variation = null)
           standard,
           variations: variation ? [variation] : []
         })
-        .select()
+        .select('id')
         .single();
 
       if (insertError) {
@@ -183,7 +192,10 @@ export const appendVariationToDeviceType = async (termId, variation) => {
       .eq('id', termId)
       .single();
 
-    if (getError) throw getError;
+    if (getError) {
+      logSupabaseError('appendVariationToDeviceType - get term', getError);
+      throw new Error(`Get term error: ${getError.message} ${getError.details ?? ''}`);
+    }
 
     // Add variation if not already present
     const currentVariations = term.variations || [];
@@ -193,7 +205,10 @@ export const appendVariationToDeviceType = async (termId, variation) => {
         .update({ variations: [...currentVariations, variation] })
         .eq('id', termId);
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        logSupabaseError('appendVariationToDeviceType - update variations', updateError);
+        throw new Error(`Update variations error: ${updateError.message} ${updateError.details ?? ''}`);
+      }
 
       // Update last_updated in nomenclature_systems
       await supabase
@@ -266,7 +281,7 @@ export const upsertReferenceTerm = async (field, standard, variation = null) => 
           standard,
           variations: variation ? [variation] : []
         })
-        .select()
+        .select('id')
         .single();
 
       if (insertError) {
@@ -295,7 +310,10 @@ export const appendVariationToReference = async (termId, variation) => {
       .eq('id', termId)
       .single();
 
-    if (getError) throw getError;
+    if (getError) {
+      logSupabaseError('appendVariationToReference - get term', getError);
+      throw getError;
+    }
 
     // Add variation if not already present
     const currentVariations = term.variations || [];
@@ -305,7 +323,10 @@ export const appendVariationToReference = async (termId, variation) => {
         .update({ variations: [...currentVariations, variation] })
         .eq('id', termId);
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        logSupabaseError('appendVariationToReference - update variations', updateError);
+        throw updateError;
+      }
     }
 
     return true;
@@ -326,7 +347,10 @@ export const seedDefaultData = async () => {
       .select('id')
       .limit(1);
 
-    if (checkError) throw checkError;
+    if (checkError) {
+      logSupabaseError('seedDefaultData - check existing', checkError);
+      throw checkError;
+    }
 
     if (existingSystems && existingSystems.length > 0) {
       return; // Already seeded
@@ -344,7 +368,10 @@ export const seedDefaultData = async () => {
       .select()
       .single();
 
-    if (umdnsError) throw umdnsError;
+    if (umdnsError) {
+      logSupabaseError('seedDefaultData - create UMDNS system', umdnsError);
+      throw umdnsError;
+    }
 
     const { data: gmdnSystem, error: gmdnError } = await supabase
       .from('nomenclature_systems')
@@ -357,7 +384,10 @@ export const seedDefaultData = async () => {
       .select()
       .single();
 
-    if (gmdnError) throw gmdnError;
+    if (gmdnError) {
+      logSupabaseError('seedDefaultData - create GMDN system', gmdnError);
+      throw gmdnError;
+    }
 
     // Create default device type terms
     const defaultDeviceTypes = [
@@ -396,24 +426,112 @@ export const seedDefaultData = async () => {
   }
 };
 
+// Delete device type term
+export const deleteDeviceTypeTerm = async (termId) => {
+  try {
+    validateEnvVars();
+
+    console.log(`Deleting device type term: ${termId}`);
+
+    // Get the term to find its system_id before deletion
+    const { data: term, error: getError } = await supabase
+      .from('device_type_terms')
+      .select('system_id')
+      .eq('id', termId)
+      .single();
+
+    if (getError) {
+      logSupabaseError('deleteDeviceTypeTerm - get term', getError);
+      throw getError;
+    }
+
+    // Delete the term
+    const { error: deleteError } = await supabase
+      .from('device_type_terms')
+      .delete()
+      .eq('id', termId);
+
+    if (deleteError) {
+      logSupabaseError('deleteDeviceTypeTerm - delete', deleteError);
+      throw deleteError;
+    }
+
+    // Update last_updated in nomenclature_systems
+    const { error: updateSystemError } = await supabase
+      .from('nomenclature_systems')
+      .update({ last_updated: new Date().toISOString() })
+      .eq('id', term.system_id);
+
+    if (updateSystemError) {
+      logSupabaseError('deleteDeviceTypeTerm - update system timestamp', updateSystemError);
+      // Don't fail the whole operation for timestamp update failure
+      console.warn('Failed to update system timestamp, but term was deleted successfully');
+    }
+
+    console.log(`Successfully deleted device type term: ${termId}`);
+    return true;
+  } catch (error) {
+    console.error('Error deleting device type term:', error);
+    throw error;
+  }
+};
+
 // Test Supabase connectivity and write permissions
 export const canWriteToSupabase = async () => {
   try {
     validateEnvVars();
-    
-    // Try to insert a test record into a temporary table or use a simple query
-    const { data, error } = await supabase
-      .from('nomenclature_systems')
-      .select('id')
-      .limit(1);
-    
-    if (error) {
-      logSupabaseError('canWriteToSupabase - test query', error);
-      return { canWrite: false, error: error.message, code: error.code };
-    }
-    
-    return { canWrite: true, error: null, code: null };
+  
+  // Try to insert a test record into a temporary table or use a simple query
+  const { data, error } = await supabase
+    .from('nomenclature_systems')
+    .select('id')
+    .limit(1);
+  
+  if (error) {
+    logSupabaseError('canWriteToSupabase - test query', error);
+    return { canWrite: false, error: error.message, code: error.code };
+  }
+  
+  return { canWrite: true, error: null, code: null };
+} catch (error) {
+  return { canWrite: false, error: error.message, code: null };
+}
+};
+
+// Update device type term variations (for merging)
+export const updateDeviceTypeTermVariations = async (termId, variations) => {
+  try {
+    validateEnvVars();
+
+    const { error } = await supabase
+      .from('device_type_terms')
+      .update({ variations })
+      .eq('id', termId);
+
+    if (error) throw error;
+
+    return { success: true };
   } catch (error) {
-    return { canWrite: false, error: error.message, code: null };
+    logSupabaseError('updateDeviceTypeTermVariations', error);
+    throw error;
+  }
+};
+
+// Update nomenclature system last_updated timestamp
+export const updateNomenclatureSystemTimestamp = async (systemId) => {
+  try {
+    validateEnvVars();
+
+    const { error } = await supabase
+      .from('nomenclature_systems')
+      .update({ last_updated: new Date().toISOString() })
+      .eq('id', systemId);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    logSupabaseError('updateNomenclatureSystemTimestamp', error);
+    throw error;
   }
 };

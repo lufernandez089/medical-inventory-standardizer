@@ -7,7 +7,10 @@ import {
   upsertReferenceTerm, 
   appendVariationToReference,
   seedDefaultData,
-  canWriteToSupabase
+  canWriteToSupabase,
+  deleteDeviceTypeTerm,
+  updateDeviceTypeTermVariations,
+  updateNomenclatureSystemTimestamp
 } from './lib/db.js';
 
 const MedicalInventoryStandardizer = () => {
@@ -94,30 +97,30 @@ const MedicalInventoryStandardizer = () => {
     universalSearch: ''
   });
 
-  // Load data from database on component mount
+    // Load data from database on component mount
   useEffect(() => {
     const initializeData = async () => {
-              try {
-          setIsLoading(true);
-          setLoadError(null);
-          
-          // Check Supabase configuration and connectivity
-          const connectivityTest = await canWriteToSupabase();
-          setSupabaseStatus({
-            configured: !connectivityTest.error?.includes('environment variables missing'),
-            canWrite: connectivityTest.canWrite
-          });
-          
-          if (!connectivityTest.canWrite) {
-            console.warn('Supabase not available:', connectivityTest.error);
-            // Fallback to hardcoded defaults
-            setNomenclatureSystems(defaultSystems);
-            setReferenceDB(defaultData);
-            setIsLoading(false);
-            return;
-          }
-          
-          // Try to load from database
+      try {
+        setIsLoading(true);
+        setLoadError(null);
+        
+        // Check Supabase configuration and connectivity
+        const connectivityTest = await canWriteToSupabase();
+        setSupabaseStatus({
+          configured: !connectivityTest.error?.includes('environment variables missing'),
+          canWrite: connectivityTest.canWrite
+        });
+        
+        if (!connectivityTest.canWrite) {
+          console.warn('Supabase not available:', connectivityTest.error);
+          // Fallback to hardcoded defaults
+          setNomenclatureSystems(defaultSystems);
+          setReferenceDB(defaultData);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Try to load from database
         const catalog = await loadCatalog();
         
         if (catalog.nomenclatureSystems.length === 0) {
@@ -212,33 +215,117 @@ const MedicalInventoryStandardizer = () => {
     }
   };
 
-  // Matching
+  // Enhanced fuzzy matching with multiple algorithms
   const findBestMatches = (originalValue, fieldTerms) => {
     const matches = [];
     const originalLower = originalValue.toLowerCase().trim();
     
+    if (originalLower.length < 2) return matches;
+    
     for (const term of fieldTerms) {
+      let bestScore = 0;
+      let bestReason = '';
+      
+      // 1. Exact matches (highest priority)
       if (term.standard.toLowerCase() === originalLower) {
         matches.push({ term, score: 1.0, reason: 'Exact match' });
         continue;
       }
       
+      // 2. Exact variation matches
       const exactVariation = term.variations.find(v => v.toLowerCase() === originalLower);
       if (exactVariation) {
         matches.push({ term, score: 1.0, reason: 'Exact variation match' });
         continue;
       }
       
+      // 3. Contains match (original contains standard or vice versa)
       const standardLower = term.standard.toLowerCase();
-      if (standardLower.includes(originalLower) && originalLower.length > 2) {
-        const score = originalLower.length / standardLower.length * 0.7;
-        if (score > 0.3) {
-          matches.push({ term, score, reason: 'Partial match' });
+      if (standardLower.includes(originalLower) || originalLower.includes(standardLower)) {
+        const lengthRatio = Math.min(originalLower.length, standardLower.length) / Math.max(originalLower.length, standardLower.length);
+        const score = lengthRatio * 0.8;
+        if (score > 0.4) {
+          bestScore = Math.max(bestScore, score);
+          bestReason = 'Contains match';
+        }
+      }
+      
+      // 4. Fuzzy string similarity using Levenshtein distance approximation
+      const similarity = calculateSimilarity(originalLower, standardLower);
+      if (similarity > 0.6) {
+        const score = similarity * 0.7;
+        if (score > bestScore) {
+          bestScore = score;
+          bestReason = 'Similar term';
+        }
+      }
+      
+      // 5. Check variations for fuzzy matches
+      for (const variation of term.variations) {
+        const variationLower = variation.toLowerCase();
+        const variationSimilarity = calculateSimilarity(originalLower, variationLower);
+        if (variationSimilarity > 0.6) {
+          const score = variationSimilarity * 0.65;
+          if (score > bestScore) {
+            bestScore = score;
+            bestReason = 'Similar variation';
+          }
+        }
+      }
+      
+      // 6. Word-based similarity (for multi-word terms)
+      const originalWords = originalLower.split(/\s+/);
+      const standardWords = standardLower.split(/\s+/);
+      const commonWords = originalWords.filter(word => 
+        standardWords.some(sw => calculateSimilarity(word, sw) > 0.7)
+      );
+      if (commonWords.length > 0) {
+        const wordScore = (commonWords.length / Math.max(originalWords.length, standardWords.length)) * 0.6;
+        if (wordScore > bestScore) {
+          bestScore = wordScore;
+          bestReason = 'Word similarity';
+        }
+      }
+      
+      if (bestScore > 0.3) {
+        matches.push({ term, score: bestScore, reason: bestReason });
+      }
+    }
+    
+    return matches.sort((a, b) => b.score - a.score).slice(0, 8); // Show more matches
+  };
+
+  // Calculate string similarity (0-1 scale)
+  const calculateSimilarity = (str1, str2) => {
+    if (str1 === str2) return 1;
+    if (str1.length === 0) return str2.length === 0 ? 1 : 0;
+    if (str2.length === 0) return 0;
+    
+    // Simple similarity based on character overlap and length difference
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+    
+    // Count common characters in order
+    let commonChars = 0;
+    let j = 0;
+    for (let i = 0; i < shorter.length && j < longer.length; i++) {
+      if (shorter[i] === longer[j]) {
+        commonChars++;
+        j++;
+      } else {
+        // Look ahead for better matches
+        for (let k = j + 1; k < longer.length; k++) {
+          if (shorter[i] === longer[k]) {
+            commonChars++;
+            j = k + 1;
+            break;
+          }
         }
       }
     }
     
-    return matches.sort((a, b) => b.score - a.score).slice(0, 5);
+    const lengthPenalty = 1 - Math.abs(longer.length - shorter.length) / Math.max(longer.length, shorter.length);
+    return (commonChars / longer.length) * 0.7 + lengthPenalty * 0.3;
   };
 
   const analyzeData = () => {
@@ -333,8 +420,12 @@ const MedicalInventoryStandardizer = () => {
       moveToNextReview();
     } catch (error) {
       console.error('Failed to persist variation:', error);
-      showToast('Failed to save variation, but continuing...', 'error');
-      moveToNextReview();
+      
+      // Show the actual error message
+      const errorMessage = error.message || 'Unknown error occurred';
+      showToast(`Failed to save variation: ${errorMessage}`, 'error');
+      
+      // Don't advance to next review on failure
     }
   };
 
@@ -760,9 +851,29 @@ const MedicalInventoryStandardizer = () => {
       return;
     }
 
-    const terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
-    const sourceItem = terms.find(t => t.id === mergeTermData.sourceId);
-    const targetItem = terms.find(t => t.id === mergeTermData.targetId);
+    let terms, sourceItem, targetItem;
+    
+    if (mergeTermData.type === 'deviceType') {
+      // Handle device type terms from nomenclature systems
+      const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+      if (!selectedSystem) {
+        showToast('No nomenclature system selected', 'error');
+        return;
+      }
+      terms = selectedSystem.deviceTypeTerms || [];
+      sourceItem = terms.find(t => t.id === mergeTermData.sourceId);
+      targetItem = terms.find(t => t.id === mergeTermData.targetId);
+    } else {
+      // Handle reference terms (manufacturer/model)
+      terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+      sourceItem = terms.find(t => t.id === mergeTermData.sourceId);
+      targetItem = terms.find(t => t.id === mergeTermData.targetId);
+    }
+
+    if (!sourceItem || !targetItem) {
+      showToast('One or both terms not found', 'error');
+      return;
+    }
 
     setMergeConfirmData({
       source: sourceItem,
@@ -773,41 +884,81 @@ const MedicalInventoryStandardizer = () => {
     setShowMergeConfirmModal(true);
   };
 
-  const handleMergeConfirm = () => {
+  const handleMergeConfirm = async () => {
     const { source, target, type } = mergeConfirmData;
     
-    // Combine variations and remove duplicates
-    // SOURCE keeps its name, TARGET name becomes a variation
-    const combinedVariations = [...new Set([
-      ...source.variations,
-      target.standard, // Add target name as variation
-      ...target.variations
-    ])];
+    try {
+      // Combine variations and remove duplicates
+      // SOURCE keeps its name, TARGET name becomes a variation
+      const combinedVariations = [...new Set([
+        ...source.variations,
+        target.standard, // Add target name as variation
+        ...target.variations
+      ])];
 
-    const updatedSource = {
-      ...source,
-      variations: combinedVariations
-    };
+      const updatedSource = {
+        ...source,
+        variations: combinedVariations
+      };
 
-    if (type === 'manufacturer') {
-      setReferenceDB(prev => ({
-        ...prev,
-        Manufacturer: prev.Manufacturer
-          .map(term => term.id === source.id ? updatedSource : term)
-          .filter(term => term.id !== target.id) // Remove target term
-      }));
-    } else if (type === 'model') {
-      setReferenceDB(prev => ({
-        ...prev,
-        Model: prev.Model
-          .map(term => term.id === source.id ? updatedSource : term)
-          .filter(term => term.id !== target.id) // Remove target term
-      }));
+      if (type === 'deviceType') {
+        // Handle device type terms from nomenclature systems
+        try {
+          // Update source term with combined variations
+          await updateDeviceTypeTermVariations(source.id, combinedVariations);
+          
+          // Delete target term
+          await deleteDeviceTypeTerm(target.id);
+          
+          // Update system timestamp
+          await updateNomenclatureSystemTimestamp(adminSelectedSystem);
+          
+          // Update local state
+          setNomenclatureSystems(prev => prev.map(system => {
+            if (system.id === adminSelectedSystem) {
+              return {
+                ...system,
+                lastUpdated: new Date().toISOString(),
+                deviceTypeTerms: system.deviceTypeTerms
+                  .map(term => term.id === source.id ? updatedSource : term)
+                  .filter(term => term.id !== target.id) // Remove target term
+              };
+            }
+            return system;
+          }));
+          
+          showToast(`${target.standard} merged into ${source.standard}!`);
+        } catch (error) {
+          console.error('Error merging device type terms:', error);
+          showToast(`Error merging terms: ${error.message}`, 'error');
+          return; // Don't close modal on error
+        }
+      } else if (type === 'manufacturer') {
+        // Handle manufacturer terms
+        setReferenceDB(prev => ({
+          ...prev,
+          Manufacturer: prev.Manufacturer
+            .map(term => term.id === source.id ? updatedSource : term)
+            .filter(term => term.id !== target.id) // Remove target term
+        }));
+        showToast(`${target.standard} merged into ${source.standard}!`);
+      } else if (type === 'model') {
+        // Handle model terms
+        setReferenceDB(prev => ({
+          ...prev,
+          Model: prev.Model
+            .map(term => term.id === source.id ? updatedSource : term)
+            .filter(term => term.id !== target.id) // Remove target term
+        }));
+        showToast(`${target.standard} merged into ${source.standard}!`);
+      }
+
+      setShowMergeConfirmModal(false);
+      setMergeConfirmData({ source: null, target: null, type: '' });
+    } catch (error) {
+      console.error('Failed to merge terms:', error);
+      showToast(`Failed to merge terms: ${error.message}`, 'error');
     }
-
-    setShowMergeConfirmModal(false);
-    setMergeConfirmData({ source: null, target: null, type: '' });
-    showToast(`${target.standard} merged into ${source.standard}!`);
   };
 
   // Show loading spinner while initializing
@@ -1058,6 +1209,24 @@ const MedicalInventoryStandardizer = () => {
                     {reviewItems[currentReviewIndex] && (
                       <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
                         <div className="mb-6">
+                          {/* Field/Column Information */}
+                          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                              <span className="text-sm font-medium text-blue-700">Field/Column:</span>
+                            </div>
+                            <div className="text-lg font-semibold text-blue-900">
+                              {reviewItems[currentReviewIndex].field === 'Device Type' 
+                                ? `Device Type (${nomenclatureSystems.find(s => s.id === activeNomenclatureSystem)?.name})`
+                                : reviewItems[currentReviewIndex].field
+                              }
+                            </div>
+                            <div className="text-xs text-blue-600 mt-1">
+                              This term will be standardized in the {reviewItems[currentReviewIndex].field} field
+                            </div>
+                          </div>
+                          
+                          {/* Original Value */}
                           <div className="bg-gray-50 rounded-xl p-4 mb-6">
                             <div className="text-sm font-medium text-gray-700 mb-2">Original Value:</div>
                             <div className="text-2xl font-bold text-gray-900">
@@ -1069,25 +1238,117 @@ const MedicalInventoryStandardizer = () => {
                         <div className="space-y-4">
                           {reviewItems[currentReviewIndex].potentialMatches?.length > 0 && (
                             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                              <h4 className="font-semibold text-blue-800 mb-3">🎯 Suggested Matches</h4>
-                              <div className="space-y-2">
-                                {reviewItems[currentReviewIndex].potentialMatches.slice(0, 3).map((match, index) => (
-                                  <div key={index} className="bg-white border border-blue-200 rounded-lg p-3 flex items-center justify-between">
-                                    <div className="flex-1">
-                                      <div className="font-medium text-gray-900">{match.term.standard}</div>
-                                      <div className="text-xs text-gray-500 mt-1">
-                                        {Math.round(match.score * 100)}% confidence • {match.reason}
-                                      </div>
-                                    </div>
-                                    <button
-                                      onClick={() => acceptSuggestion(match)}
-                                      className="ml-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 text-sm"
-                                    >
-                                      ✓ Accept
-                                    </button>
+                              <h4 className="font-semibold text-blue-800 mb-3 flex items-center gap-2">
+                                🎯 Suggested Matches 
+                                <span className="text-sm font-normal text-blue-600">
+                                  ({reviewItems[currentReviewIndex].potentialMatches.length} found)
+                                </span>
+                              </h4>
+                              
+                              {/* High Confidence Matches (Score > 0.7) */}
+                              {reviewItems[currentReviewIndex].potentialMatches.filter(m => m.score > 0.7).length > 0 && (
+                                <div className="mb-4">
+                                  <div className="text-xs font-medium text-blue-700 mb-2 uppercase tracking-wide">High Confidence</div>
+                                  <div className="space-y-2">
+                                    {reviewItems[currentReviewIndex].potentialMatches
+                                      .filter(m => m.score > 0.7)
+                                      .slice(0, 3)
+                                      .map((match, index) => (
+                                        <div key={index} className="bg-white border-2 border-green-200 rounded-lg p-3 flex items-center justify-between hover:border-green-300 transition-colors">
+                                          <div className="flex-1">
+                                            <div className="font-medium text-gray-900">{match.term.standard}</div>
+                                            <div className="text-xs text-gray-500 mt-1">
+                                              {Math.round(match.score * 100)}% confidence • {match.reason}
+                                            </div>
+                                            {match.term.variations.length > 0 && (
+                                              <div className="text-xs text-gray-400 mt-1">
+                                                Variations: {match.term.variations.slice(0, 3).join(', ')}
+                                                {match.term.variations.length > 3 && ` +${match.term.variations.length - 3} more`}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <button
+                                            onClick={() => acceptSuggestion(match)}
+                                            className="ml-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 text-sm font-medium"
+                                          >
+                                            ✓ Accept
+                                          </button>
+                                        </div>
+                                      ))}
                                   </div>
-                                ))}
-                              </div>
+                                </div>
+                              )}
+                              
+                              {/* Medium Confidence Matches (Score 0.4-0.7) */}
+                              {reviewItems[currentReviewIndex].potentialMatches.filter(m => m.score <= 0.7 && m.score > 0.4).length > 0 && (
+                                <div className="mb-4">
+                                  <div className="text-xs font-medium text-blue-700 mb-2 uppercase tracking-wide">Medium Confidence</div>
+                                  <div className="space-y-2">
+                                    {reviewItems[currentReviewIndex].potentialMatches
+                                      .filter(m => m.score <= 0.7 && m.score > 0.4)
+                                      .slice(0, 3)
+                                      .map((match, index) => (
+                                        <div key={index} className="bg-white border border-blue-200 rounded-lg p-3 flex items-center justify-between hover:border-blue-300 transition-colors">
+                                          <div className="flex-1">
+                                            <div className="font-medium text-gray-900">{match.term.standard}</div>
+                                            <div className="text-xs text-gray-500 mt-1">
+                                              {Math.round(match.score * 100)}% confidence • {match.reason}
+                                            </div>
+                                            {match.term.variations.length > 0 && (
+                                              <div className="text-xs text-gray-400 mt-1">
+                                                Variations: {match.term.variations.slice(0, 2).join(', ')}
+                                                {match.term.variations.length > 2 && ` +${match.term.variations.length - 2} more`}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <button
+                                            onClick={() => acceptSuggestion(match)}
+                                            className="ml-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 text-sm"
+                                          >
+                                            ✓ Accept
+                                          </button>
+                                        </div>
+                                      ))}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Low Confidence Matches (Score < 0.4) */}
+                              {reviewItems[currentReviewIndex].potentialMatches.filter(m => m.score <= 0.4).length > 0 && (
+                                <div>
+                                  <div className="text-xs font-medium text-blue-700 mb-2 uppercase tracking-wide">Low Confidence</div>
+                                  <div className="space-y-2">
+                                    {reviewItems[currentReviewIndex].potentialMatches
+                                      .filter(m => m.score <= 0.4)
+                                      .slice(0, 2)
+                                      .map((match, index) => (
+                                        <div key={index} className="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between opacity-75">
+                                          <div className="flex-1">
+                                            <div className="font-medium text-gray-700">{match.term.standard}</div>
+                                            <div className="text-xs text-gray-500 mt-1">
+                                              {Math.round(match.score * 100)}% confidence • {match.reason}
+                                            </div>
+                                          </div>
+                                          <button
+                                            onClick={() => acceptSuggestion(match)}
+                                            className="ml-3 bg-gray-400 text-white px-4 py-2 rounded-lg hover:bg-gray-500 transition-colors duration-200 text-sm"
+                                            disabled
+                                          >
+                                            Use with Caution
+                                          </button>
+                                        </div>
+                                      ))}
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {reviewItems[currentReviewIndex].potentialMatches.length > 8 && (
+                                <div className="mt-3 text-center">
+                                  <div className="text-xs text-blue-600">
+                                    Showing top 8 matches • {reviewItems[currentReviewIndex].potentialMatches.length - 8} more available
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
 
@@ -1427,12 +1688,23 @@ const MedicalInventoryStandardizer = () => {
                               <button 
                                 onClick={() => handleEditTermClick(term, 'deviceType')}
                                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Edit Term"
                               >
                                 <Edit2 size={16} />
                               </button>
                               <button 
+                                onClick={() => handleMergeTermClick(term, 'deviceType')}
+                                className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="Merge Term"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                </svg>
+                              </button>
+                              <button 
                                 onClick={() => handleDeleteTermClick(term, 'deviceType')}
                                 className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete Term"
                               >
                                 <Trash2 size={16} />
                               </button>
@@ -1821,14 +2093,26 @@ const MedicalInventoryStandardizer = () => {
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500"
                 >
                   <option value="">Select a term...</option>
-                  {(referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [])
-                    .filter(term => term.id !== mergeTermData.sourceId)
-                    .sort((a, b) => a.standard.localeCompare(b.standard))
-                    .map(term => (
-                      <option key={term.id} value={term.id}>
-                        {term.standard}
-                      </option>
-                    ))}
+                  {(() => {
+                    let terms = [];
+                    if (mergeTermData.type === 'deviceType') {
+                      // Get terms from the selected nomenclature system
+                      const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+                      terms = selectedSystem?.deviceTypeTerms || [];
+                    } else {
+                      // Get terms from reference database
+                      terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+                    }
+                    
+                    return terms
+                      .filter(term => term.id !== mergeTermData.sourceId)
+                      .sort((a, b) => a.standard.localeCompare(b.standard))
+                      .map(term => (
+                        <option key={term.id} value={term.id}>
+                          {term.standard}
+                        </option>
+                      ));
+                  })()}
                 </select>
               </div>
               
