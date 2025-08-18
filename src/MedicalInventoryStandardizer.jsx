@@ -1,9 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Upload, Download, Check, X, Search, Edit2, Trash2, AlertCircle } from 'lucide-react';
 
-import React, { useState } from 'react';
-import { Plus, Upload, Download, Check, X, Search, Edit2, Trash2, AlertCircle } from 'lucide-react';
-
 const MedicalInventoryStandardizer = () => {
   // Default data
   const defaultData = {
