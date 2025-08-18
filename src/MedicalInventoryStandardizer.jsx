@@ -1,8 +1,20 @@
-import React, { useState } from 'react';
-import { Plus, Upload, Download, Check, X, Search, Edit2, Trash2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Upload, Download, Check, X, Search, Edit2, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { 
+  loadCatalog, 
+  upsertDeviceTypeTerm, 
+  appendVariationToDeviceType, 
+  upsertReferenceTerm, 
+  appendVariationToReference,
+  seedDefaultData 
+} from './lib/db.js';
 
 const MedicalInventoryStandardizer = () => {
-  // Default data
+  // Loading state
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  // Default data (fallback)
   const defaultData = {
     'Manufacturer': [
       { id: 4, standard: 'Philips Healthcare', variations: ['Philips', 'Phillips', 'Philips Medical'] },
@@ -78,6 +90,49 @@ const MedicalInventoryStandardizer = () => {
     selectedUniversalType: 'Manufacturer',
     universalSearch: ''
   });
+
+  // Load data from database on component mount
+  useEffect(() => {
+    const initializeData = async () => {
+      try {
+        setIsLoading(true);
+        setLoadError(null);
+        
+        // Try to load from database
+        const catalog = await loadCatalog();
+        
+        if (catalog.nomenclatureSystems.length === 0) {
+          // Database is empty, seed with defaults
+          await seedDefaultData();
+          const seededCatalog = await loadCatalog();
+          setNomenclatureSystems(seededCatalog.nomenclatureSystems);
+          setReferenceDB(seededCatalog.referenceDB);
+        } else {
+          // Use data from database
+          setNomenclatureSystems(catalog.nomenclatureSystems);
+          setReferenceDB(catalog.referenceDB);
+        }
+        
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Failed to load data from database:', error);
+        setLoadError(error.message);
+        
+        // Fallback to hardcoded defaults
+        setNomenclatureSystems(defaultSystems);
+        setReferenceDB(defaultData);
+        setIsLoading(false);
+        
+        if (error.message.includes('environment variables not configured')) {
+          showToast('Database not configured, using local data', 'info');
+        } else {
+          showToast('Failed to load from database, using local data', 'error');
+        }
+      }
+    };
+
+    initializeData();
+  }, []);
 
   // Utility functions
   const showToast = (message, type = 'success') => {
@@ -216,67 +271,104 @@ const MedicalInventoryStandardizer = () => {
   };
 
   // Review
-  const acceptSuggestion = (selectedMatch) => {
+  const acceptSuggestion = async (selectedMatch) => {
     const item = reviewItems[currentReviewIndex];
     
-    if (item.field === 'Device Type') {
-      setNomenclatureSystems(prev => 
-        prev.map(system => 
-          system.id === activeNomenclatureSystem
-            ? { 
-                ...system, 
-                deviceTypeTerms: system.deviceTypeTerms.map(term => 
-                  term.id === selectedMatch.term.id
-                    ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
-                    : term
-                ),
-                lastUpdated: new Date().toISOString()
-              }
-            : system
-        )
-      );
-    } else {
-      setReferenceDB(prev => ({
-        ...prev,
-        [item.field]: prev[item.field].map(term =>
-          term.id === selectedMatch.term.id
-            ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
-            : term
-        )
-      }));
+    try {
+      if (item.field === 'Device Type') {
+        // Persist to database
+        await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
+        
+        // Update local state
+        setNomenclatureSystems(prev => 
+          prev.map(system => 
+            system.id === activeNomenclatureSystem
+              ? { 
+                  ...system, 
+                  deviceTypeTerms: system.deviceTypeTerms.map(term => 
+                    term.id === selectedMatch.term.id
+                      ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
+                      : term
+                  ),
+                  lastUpdated: new Date().toISOString()
+                }
+              : system
+          )
+        );
+      } else {
+        // Persist to database
+        await appendVariationToReference(selectedMatch.term.id, item.originalValue);
+        
+        // Update local state
+        setReferenceDB(prev => ({
+          ...prev,
+          [item.field]: prev[item.field].map(term =>
+            term.id === selectedMatch.term.id
+              ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
+              : term
+          )
+        }));
+      }
+      
+      showToast('Variation added successfully');
+      moveToNextReview();
+    } catch (error) {
+      console.error('Failed to persist variation:', error);
+      showToast('Failed to save variation, but continuing...', 'error');
+      moveToNextReview();
     }
-    
-    moveToNextReview();
   };
 
-  const addNewStandardTerm = (newStandardTerm) => {
+  const addNewStandardTerm = async (newStandardTerm) => {
     const item = reviewItems[currentReviewIndex];
-    const newTerm = {
-      id: Date.now(),
-      standard: newStandardTerm,
-      variations: [item.originalValue]
-    };
-
-    if (item.field === 'Device Type') {
-      setNomenclatureSystems(prev => 
-        prev.map(system => 
-          system.id === activeNomenclatureSystem
-            ? { 
-                ...system, 
-                deviceTypeTerms: [...system.deviceTypeTerms, newTerm],
-                lastUpdated: new Date().toISOString()
-              }
-            : system
-        )
-      );
-    } else {
-      setReferenceDB(prev => ({
-        ...prev,
-        [item.field]: [...(prev[item.field] || []), newTerm]
-      }));
-    }
     
-    moveToNextReview();
+    try {
+      if (item.field === 'Device Type') {
+        // Persist to database
+        const termId = await upsertDeviceTypeTerm(activeNomenclatureSystem, newStandardTerm, item.originalValue);
+        
+        // Update local state with the new term from database
+        const newTerm = {
+          id: termId,
+          standard: newStandardTerm,
+          variations: [item.originalValue]
+        };
+        
+        setNomenclatureSystems(prev => 
+          prev.map(system => 
+            system.id === activeNomenclatureSystem
+              ? { 
+                  ...system, 
+                  deviceTypeTerms: [...system.deviceTypeTerms, newTerm],
+                  lastUpdated: new Date().toISOString()
+                }
+              : system
+          )
+        );
+      } else {
+        // Persist to database
+        const termId = await upsertReferenceTerm(item.field, newStandardTerm, item.originalValue);
+        
+        // Update local state with the new term from database
+        const newTerm = {
+          id: termId,
+          standard: newStandardTerm,
+          variations: [item.originalValue]
+        };
+        
+        setReferenceDB(prev => ({
+          ...prev,
+          [item.field]: [...(prev[item.field] || []), newTerm]
+        }));
+      }
+      
+      showToast('New term created successfully');
+      moveToNextReview();
+    } catch (error) {
+      console.error('Failed to create new term:', error);
+      showToast('Failed to create new term, but continuing...', 'error');
+      moveToNextReview();
+    }
   };
 
   const moveToNextReview = () => {
@@ -350,7 +442,9 @@ const MedicalInventoryStandardizer = () => {
   };
 
   const handleAdminPasswordSubmit = () => {
-    if (adminPasswordInput === 'TINCTester') {
+    const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD || 'TINCTester';
+    
+    if (adminPasswordInput === adminPassword) {
       setIsAdminAuthenticated(true);
       setShowAdminPasswordModal(false);
       setActiveTab('admin');
@@ -687,6 +781,29 @@ const MedicalInventoryStandardizer = () => {
     setMergeConfirmData({ source: null, target: null, type: '' });
     showToast(`${target.standard} merged into ${source.standard}!`);
   };
+
+  // Show loading spinner while initializing
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-12 w-12 animate-spin text-blue-500 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading Medical Inventory Standardizer</h2>
+          <p className="text-gray-600">Initializing database connection...</p>
+          {loadError && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-yellow-800 text-sm">
+                ⚠️ {loadError.includes('environment variables') ? 
+                  'Database not configured, using local data' : 
+                  'Using local data due to database error'
+                }
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
