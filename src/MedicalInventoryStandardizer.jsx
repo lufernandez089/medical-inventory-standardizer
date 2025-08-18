@@ -5,9 +5,10 @@ import {
   upsertDeviceTypeTerm, 
   appendVariationToDeviceType, 
   upsertReferenceTerm, 
-  appendVariationToReference,
-  seedDefaultData,
-  canWriteToSupabase
+  appendVariationToReference, 
+  seedDefaultData, 
+  canWriteToSupabase,
+  deleteDeviceTypeTerm
 } from './lib/db.js';
 
 const MedicalInventoryStandardizer = () => {
@@ -781,9 +782,29 @@ const MedicalInventoryStandardizer = () => {
       return;
     }
 
-    const terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
-    const sourceItem = terms.find(t => t.id === mergeTermData.sourceId);
-    const targetItem = terms.find(t => t.id === mergeTermData.targetId);
+    let terms, sourceItem, targetItem;
+    
+    if (mergeTermData.type === 'deviceType') {
+      // Handle device type terms from nomenclature systems
+      const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+      if (!selectedSystem) {
+        showToast('No nomenclature system selected', 'error');
+        return;
+      }
+      terms = selectedSystem.deviceTypeTerms || [];
+      sourceItem = terms.find(t => t.id === mergeTermData.sourceId);
+      targetItem = terms.find(t => t.id === mergeTermData.targetId);
+    } else {
+      // Handle reference terms (manufacturer/model)
+      terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+      sourceItem = terms.find(t => t.id === mergeTermData.sourceId);
+      targetItem = terms.find(t => t.id === mergeTermData.targetId);
+    }
+
+    if (!sourceItem || !targetItem) {
+      showToast('One or both terms not found', 'error');
+      return;
+    }
 
     setMergeConfirmData({
       source: sourceItem,
@@ -794,41 +815,85 @@ const MedicalInventoryStandardizer = () => {
     setShowMergeConfirmModal(true);
   };
 
-  const handleMergeConfirm = () => {
+  const handleMergeConfirm = async () => {
     const { source, target, type } = mergeConfirmData;
     
-    // Combine variations and remove duplicates
-    // SOURCE keeps its name, TARGET name becomes a variation
-    const combinedVariations = [...new Set([
-      ...source.variations,
-      target.standard, // Add target name as variation
-      ...target.variations
-    ])];
+    try {
+      // Combine variations and remove duplicates
+      // SOURCE keeps its name, TARGET name becomes a variation
+      const combinedVariations = [...new Set([
+        ...source.variations,
+        target.standard, // Add target name as variation
+        ...target.variations
+      ])];
 
-    const updatedSource = {
-      ...source,
-      variations: combinedVariations
-    };
+      const updatedSource = {
+        ...source,
+        variations: combinedVariations
+      };
 
-    if (type === 'manufacturer') {
-      setReferenceDB(prev => ({
-        ...prev,
-        Manufacturer: prev.Manufacturer
-          .map(term => term.id === source.id ? updatedSource : term)
-          .filter(term => term.id !== target.id) // Remove target term
-      }));
-    } else if (type === 'model') {
-      setReferenceDB(prev => ({
-        ...prev,
-        Model: prev.Model
-          .map(term => term.id === source.id ? updatedSource : term)
-          .filter(term => term.id !== target.id) // Remove target term
-      }));
+      if (type === 'deviceType') {
+        // Handle device type terms - persist to database
+        const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+        if (!selectedSystem) {
+          showToast('No nomenclature system selected', 'error');
+          return;
+        }
+
+        // Update the source term with combined variations
+        await appendVariationToDeviceType(source.id, target.standard);
+        // Add all target variations to source
+        for (const variation of target.variations) {
+          if (!combinedVariations.includes(variation)) {
+            await appendVariationToDeviceType(source.id, variation);
+          }
+        }
+
+        // Delete the target term from database
+        await deleteDeviceTypeTerm(target.id);
+
+        // Update local state
+        setNomenclatureSystems(prev => 
+          prev.map(system => 
+            system.id === adminSelectedSystem
+              ? {
+                  ...system,
+                  deviceTypeTerms: system.deviceTypeTerms
+                    .map(term => term.id === source.id ? updatedSource : term)
+                    .filter(term => term.id !== target.id), // Remove target term
+                  lastUpdated: new Date().toISOString()
+                }
+              : system
+          )
+        );
+
+        showToast(`${target.standard} merged into ${source.standard}!`);
+      } else if (type === 'manufacturer') {
+        // Handle manufacturer terms
+        setReferenceDB(prev => ({
+          ...prev,
+          Manufacturer: prev.Manufacturer
+            .map(term => term.id === source.id ? updatedSource : term)
+            .filter(term => term.id !== target.id) // Remove target term
+        }));
+        showToast(`${target.standard} merged into ${source.standard}!`);
+      } else if (type === 'model') {
+        // Handle model terms
+        setReferenceDB(prev => ({
+          ...prev,
+          Model: prev.Model
+            .map(term => term.id === source.id ? updatedSource : term)
+            .filter(term => term.id !== target.id) // Remove target term
+        }));
+        showToast(`${target.standard} merged into ${source.standard}!`);
+      }
+
+      setShowMergeConfirmModal(false);
+      setMergeConfirmData({ source: null, target: null, type: '' });
+    } catch (error) {
+      console.error('Failed to merge terms:', error);
+      showToast(`Failed to merge terms: ${error.message}`, 'error');
     }
-
-    setShowMergeConfirmModal(false);
-    setMergeConfirmData({ source: null, target: null, type: '' });
-    showToast(`${target.standard} merged into ${source.standard}!`);
   };
 
   // Show loading spinner while initializing
@@ -1448,12 +1513,23 @@ const MedicalInventoryStandardizer = () => {
                               <button 
                                 onClick={() => handleEditTermClick(term, 'deviceType')}
                                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Edit Term"
                               >
                                 <Edit2 size={16} />
                               </button>
                               <button 
+                                onClick={() => handleMergeTermClick(term, 'deviceType')}
+                                className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                                title="Merge Term"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                </svg>
+                              </button>
+                              <button 
                                 onClick={() => handleDeleteTermClick(term, 'deviceType')}
                                 className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete Term"
                               >
                                 <Trash2 size={16} />
                               </button>
@@ -1842,14 +1918,26 @@ const MedicalInventoryStandardizer = () => {
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500"
                 >
                   <option value="">Select a term...</option>
-                  {(referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [])
-                    .filter(term => term.id !== mergeTermData.sourceId)
-                    .sort((a, b) => a.standard.localeCompare(b.standard))
-                    .map(term => (
-                      <option key={term.id} value={term.id}>
-                        {term.standard}
-                      </option>
-                    ))}
+                  {(() => {
+                    let terms = [];
+                    if (mergeTermData.type === 'deviceType') {
+                      // Get terms from the selected nomenclature system
+                      const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+                      terms = selectedSystem?.deviceTypeTerms || [];
+                    } else {
+                      // Get terms from reference database
+                      terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+                    }
+                    
+                    return terms
+                      .filter(term => term.id !== mergeTermData.sourceId)
+                      .sort((a, b) => a.standard.localeCompare(b.standard))
+                      .map(term => (
+                        <option key={term.id} value={term.id}>
+                          {term.standard}
+                        </option>
+                      ));
+                  })()}
                 </select>
               </div>
               
