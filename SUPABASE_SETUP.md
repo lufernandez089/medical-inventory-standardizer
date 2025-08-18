@@ -72,7 +72,6 @@ If you prefer to set up RLS manually:
    create policy "anon access" on device_type_terms for all using (true) with check (true);
    create policy "anon access" on reference_terms for all using (true) with check (true);
    ```
-
 ## Fallback Behavior
 
 If Supabase is not configured or fails to connect, the application will:

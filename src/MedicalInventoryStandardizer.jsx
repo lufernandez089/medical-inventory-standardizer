@@ -97,27 +97,27 @@ const MedicalInventoryStandardizer = () => {
   // Load data from database on component mount
   useEffect(() => {
     const initializeData = async () => {
-      try {
-        setIsLoading(true);
-        setLoadError(null);
-        
-        // Check Supabase configuration and connectivity
-        const connectivityTest = await canWriteToSupabase();
-        setSupabaseStatus({
-          configured: !connectivityTest.error?.includes('environment variables missing'),
-          canWrite: connectivityTest.canWrite
-        });
-        
-        if (!connectivityTest.canWrite) {
-          console.warn('Supabase not available:', connectivityTest.error);
-          // Fallback to hardcoded defaults
-          setNomenclatureSystems(defaultSystems);
-          setReferenceDB(defaultData);
-          setIsLoading(false);
-          return;
-        }
-        
-        // Try to load from database
+              try {
+          setIsLoading(true);
+          setLoadError(null);
+          
+          // Check Supabase configuration and connectivity
+          const connectivityTest = await canWriteToSupabase();
+          setSupabaseStatus({
+            configured: !connectivityTest.error?.includes('environment variables missing'),
+            canWrite: connectivityTest.canWrite
+          });
+          
+          if (!connectivityTest.canWrite) {
+            console.warn('Supabase not available:', connectivityTest.error);
+            // Fallback to hardcoded defaults
+            setNomenclatureSystems(defaultSystems);
+            setReferenceDB(defaultData);
+            setIsLoading(false);
+            return;
+          }
+          
+          // Try to load from database
         const catalog = await loadCatalog();
         
         if (catalog.nomenclatureSystems.length === 0) {
@@ -125,7 +125,7 @@ const MedicalInventoryStandardizer = () => {
           await seedDefaultData();
           const seededCatalog = await loadCatalog();
           setNomenclatureSystems(seededCatalog.nomenclatureSystems);
-          setReferenceDB(catalog.referenceDB);
+          setReferenceDB(seededCatalog.referenceDB);
         } else {
           // Use data from database
           setNomenclatureSystems(catalog.nomenclatureSystems);
