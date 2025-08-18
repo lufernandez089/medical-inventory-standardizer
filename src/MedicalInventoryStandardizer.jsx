@@ -585,6 +585,38 @@ const MedicalInventoryStandardizer = () => {
     setShowDeleteTermModal(true);
   };
 
+  const handleDeleteTermConfirm = () => {
+    const { id, type } = deleteTermData;
+    
+    if (type === 'deviceType') {
+      setNomenclatureSystems(prev => 
+        prev.map(system => 
+          system.id === adminSelectedSystem
+            ? { 
+                ...system, 
+                deviceTypeTerms: system.deviceTypeTerms.filter(term => term.id !== id),
+                lastUpdated: new Date().toISOString()
+              }
+            : system
+        )
+      );
+    } else if (type === 'manufacturer') {
+      setReferenceDB(prev => ({
+        ...prev,
+        Manufacturer: prev.Manufacturer.filter(term => term.id !== id)
+      }));
+    } else if (type === 'model') {
+      setReferenceDB(prev => ({
+        ...prev,
+        Model: prev.Model.filter(term => term.id !== id)
+      }));
+    }
+
+    setShowDeleteTermModal(false);
+    setDeleteTermData({ id: null, standard: '', type: '' });
+    showToast(`${deleteTermData.standard} deleted successfully!`);
+  };
+
   const handleMergeTermClick = (term, type) => {
     setMergeTermData({
       sourceId: term.id,
