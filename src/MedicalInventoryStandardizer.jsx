@@ -94,30 +94,47 @@ const MedicalInventoryStandardizer = () => {
     universalSearch: ''
   });
 
-  // Load data from database on component mount
+    // Load data from database on component mount
   useEffect(() => {
     const initializeData = async () => {
-              try {
-          setIsLoading(true);
-          setLoadError(null);
-          
-          // Check Supabase configuration and connectivity
-          const connectivityTest = await canWriteToSupabase();
+      try {
+        setIsLoading(true);
+        setLoadError(null);
+        
+        // Check environment variables first
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        
+        if (!supabaseUrl || !supabaseKey) {
+          console.warn('Supabase environment variables missing');
           setSupabaseStatus({
-            configured: !connectivityTest.error?.includes('environment variables missing'),
-            canWrite: connectivityTest.canWrite
+            configured: false,
+            canWrite: false
           });
-          
-          if (!connectivityTest.canWrite) {
-            console.warn('Supabase not available:', connectivityTest.error);
-            // Fallback to hardcoded defaults
-            setNomenclatureSystems(defaultSystems);
-            setReferenceDB(defaultData);
-            setIsLoading(false);
-            return;
-          }
-          
-          // Try to load from database
+          // Fallback to hardcoded defaults
+          setNomenclatureSystems(defaultSystems);
+          setReferenceDB(defaultData);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Check Supabase configuration and connectivity
+        const connectivityTest = await canWriteToSupabase();
+        setSupabaseStatus({
+          configured: true,
+          canWrite: connectivityTest.canWrite
+        });
+        
+        if (!connectivityTest.canWrite) {
+          console.warn('Supabase not available:', connectivityTest.error);
+          // Fallback to hardcoded defaults
+          setNomenclatureSystems(defaultSystems);
+          setReferenceDB(defaultData);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Try to load from database
         const catalog = await loadCatalog();
         
         if (catalog.nomenclatureSystems.length === 0) {
@@ -333,8 +350,12 @@ const MedicalInventoryStandardizer = () => {
       moveToNextReview();
     } catch (error) {
       console.error('Failed to persist variation:', error);
-      showToast('Failed to save variation, but continuing...', 'error');
-      moveToNextReview();
+      
+      // Show the actual error message
+      const errorMessage = error.message || 'Unknown error occurred';
+      showToast(`Failed to save variation: ${errorMessage}`, 'error');
+      
+      // Don't advance to next review on failure
     }
   };
 
@@ -838,15 +859,15 @@ const MedicalInventoryStandardizer = () => {
       <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
         {/* Environment Variable Warning Banner */}
         {!supabaseStatus.configured && (
-          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4">
             <div className="flex items-start gap-3">
-              <AlertCircle className="text-yellow-600 mt-1" size={20} />
+              <AlertCircle className="text-red-600 mt-1" size={20} />
               <div>
-                <h3 className="text-yellow-800 font-semibold">Supabase Environment Variables Missing</h3>
-                <p className="text-yellow-700 text-sm mt-1">
-                  Database persistence is disabled. Create a <code className="bg-yellow-100 px-1 rounded">.env</code> file with 
-                  <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_URL</code> and 
-                  <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to enable data persistence.
+                <h3 className="text-red-800 font-semibold">Supabase Environment Variables Missing (Preview/Prod)</h3>
+                <p className="text-red-700 text-sm mt-1">
+                  Database persistence is disabled. Create a <code className="bg-red-100 px-1 rounded">.env</code> file with 
+                  <code className="bg-red-100 px-1 rounded">VITE_SUPABASE_URL</code> and 
+                  <code className="bg-red-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to enable data persistence.
                 </p>
               </div>
             </div>

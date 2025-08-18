@@ -94,7 +94,13 @@ If Supabase is not configured or fails to connect, the application will:
    - Ensure database tables exist with correct schema
    - Check Supabase project status and API limits
 
-3. **Database Connection Failures**
+3. **"Could not find the 'variations' column" Error**
+   - This error indicates a schema mismatch between your database and the application
+   - Ensure your `device_type_terms` table has a `variations` column of type `text[]`
+   - Run the SQL schema from the Setup Steps section above
+   - If using separate variation tables, update the application code accordingly
+
+4. **Database Connection Failures**
    - Verify Supabase project is active
    - Check if anon key has correct permissions
    - Ensure RLS policies allow anonymous access
