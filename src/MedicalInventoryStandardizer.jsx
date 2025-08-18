@@ -758,23 +758,7 @@ const MedicalInventoryStandardizer = () => {
                   </select>
                 </div>
 
-                <div className="bg-blue-50 p-6 rounded-2xl border border-blue-200">
-                  <div className="flex items-start gap-4">
-                    <AlertCircle className="text-blue-600 mt-1" size={24} />
-                    <div>
-                      <p className="text-blue-800 font-semibold text-lg">📋 Try this sample data:</p>
-                      <div className="bg-white p-4 rounded-lg mt-3 font-mono text-sm">
-                        <div className="text-gray-900">
-                          Tipo de Activo	Marca	Modelo<br/>
-                          Esterilizador de Gas	3M	33B<br/>
-                          Incubadora de Traslado	Drager	ISOLETTE<br/>
-                          Desfibrilador	Philips	M3046A<br/>
-                          Ventilador	GE Medical	R860
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+
 
                 <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
                   <label className="block text-lg font-semibold text-gray-700 mb-4">
