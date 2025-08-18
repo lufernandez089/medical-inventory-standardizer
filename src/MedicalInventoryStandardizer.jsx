@@ -516,8 +516,8 @@ const MedicalInventoryStandardizer = () => {
         }
         
         if (!originalValue) {
-          result[`Original ${targetField}`] = '';
-          result[`Standardized ${targetField}`] = '';
+          result[`Original ${sourceCol}`] = '';
+          result[`Standardized ${sourceCol}`] = '';
           return;
         }
         
@@ -537,8 +537,8 @@ const MedicalInventoryStandardizer = () => {
           }
         }
         
-        result[`Original ${targetField}`] = originalValue;
-        result[`Standardized ${targetField}`] = matchedTerm ? matchedTerm.standard : originalValue;
+        result[`Original ${sourceCol}`] = originalValue;
+        result[`Standardized ${sourceCol}`] = matchedTerm ? matchedTerm.standard : originalValue;
       });
       
       return result;
@@ -1455,10 +1455,10 @@ const MedicalInventoryStandardizer = () => {
                                   } else {
                                     return [
                                       <th key={`orig-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Original {mapping}
+                                        Original {originalCol}
                                       </th>,
                                       <th key={`std-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-blue-600 uppercase tracking-wider">
-                                        Standardized {mapping}
+                                        Standardized {originalCol}
                                       </th>
                                     ];
                                   }
@@ -1481,10 +1481,10 @@ const MedicalInventoryStandardizer = () => {
                                     } else {
                                       return [
                                         <td key={`orig-${originalCol}`} className="px-4 py-3 text-sm text-gray-600">
-                                          {row[`Original ${mapping}`] || '-'}
+                                          {row[`Original ${originalCol}`] || '-'}
                                         </td>,
                                         <td key={`std-${originalCol}`} className="px-4 py-3 text-sm font-medium text-blue-800">
-                                          {row[`Standardized ${mapping}`] || '-'}
+                                          {row[`Standardized ${originalCol}`] || '-'}
                                         </td>
                                       ];
                                     }
@@ -1510,10 +1510,10 @@ const MedicalInventoryStandardizer = () => {
                                 headers.push(originalCol);
                                 fieldGetters.push((row) => row[originalCol] || '');
                               } else {
-                                headers.push(`Original ${mapping}`, `Standardized ${mapping}`);
+                                headers.push(`Original ${originalCol}`, `Standardized ${originalCol}`);
                                 fieldGetters.push(
-                                  (row) => row[`Original ${mapping}`] || '',
-                                  (row) => row[`Standardized ${mapping}`] || ''
+                                  (row) => row[`Original ${originalCol}`] || '',
+                                  (row) => row[`Standardized ${originalCol}`] || ''
                                 );
                               }
                             });
