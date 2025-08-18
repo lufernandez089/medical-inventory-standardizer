@@ -6,13 +6,16 @@ import {
   appendVariationToDeviceType, 
   upsertReferenceTerm, 
   appendVariationToReference,
-  seedDefaultData 
+  seedDefaultData,
+  canWriteToSupabase
 } from './lib/db.js';
 
 const MedicalInventoryStandardizer = () => {
   // Loading state
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [supabaseStatus, setSupabaseStatus] = useState({ configured: false, canWrite: false });
+  const [isCreatingTerm, setIsCreatingTerm] = useState(false);
 
   // Default data (fallback)
   const defaultData = {
@@ -98,6 +101,22 @@ const MedicalInventoryStandardizer = () => {
         setIsLoading(true);
         setLoadError(null);
         
+        // Check Supabase configuration and connectivity
+        const connectivityTest = await canWriteToSupabase();
+        setSupabaseStatus({
+          configured: !connectivityTest.error?.includes('environment variables missing'),
+          canWrite: connectivityTest.canWrite
+        });
+        
+        if (!connectivityTest.canWrite) {
+          console.warn('Supabase not available:', connectivityTest.error);
+          // Fallback to hardcoded defaults
+          setNomenclatureSystems(defaultSystems);
+          setReferenceDB(defaultData);
+          setIsLoading(false);
+          return;
+        }
+        
         // Try to load from database
         const catalog = await loadCatalog();
         
@@ -106,7 +125,7 @@ const MedicalInventoryStandardizer = () => {
           await seedDefaultData();
           const seededCatalog = await loadCatalog();
           setNomenclatureSystems(seededCatalog.nomenclatureSystems);
-          setReferenceDB(seededCatalog.referenceDB);
+          setReferenceDB(catalog.referenceDB);
         } else {
           // Use data from database
           setNomenclatureSystems(catalog.nomenclatureSystems);
@@ -123,7 +142,7 @@ const MedicalInventoryStandardizer = () => {
         setReferenceDB(defaultData);
         setIsLoading(false);
         
-        if (error.message.includes('environment variables not configured')) {
+        if (error.message.includes('environment variables missing')) {
           showToast('Database not configured, using local data', 'info');
         } else {
           showToast('Failed to load from database, using local data', 'error');
@@ -322,6 +341,8 @@ const MedicalInventoryStandardizer = () => {
   const addNewStandardTerm = async (newStandardTerm) => {
     const item = reviewItems[currentReviewIndex];
     
+    setIsCreatingTerm(true);
+    
     try {
       if (item.field === 'Device Type') {
         // Persist to database
@@ -366,8 +387,15 @@ const MedicalInventoryStandardizer = () => {
       moveToNextReview();
     } catch (error) {
       console.error('Failed to create new term:', error);
-      showToast('Failed to create new term, but continuing...', 'error');
-      moveToNextReview();
+      
+      // Show the actual error message instead of generic text
+      const errorMessage = error.message || 'Unknown error occurred';
+      showToast(`Failed to create new term: ${errorMessage}`, 'error');
+      
+      // Don't advance to next review on failure - keep user on same item
+      // moveToNextReview(); // Removed this line
+    } finally {
+      setIsCreatingTerm(false);
     }
   };
 
@@ -808,6 +836,23 @@ const MedicalInventoryStandardizer = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
       <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        {/* Environment Variable Warning Banner */}
+        {!supabaseStatus.configured && (
+          <div className="mb-6 bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="text-yellow-600 mt-1" size={20} />
+              <div>
+                <h3 className="text-yellow-800 font-semibold">Supabase Environment Variables Missing</h3>
+                <p className="text-yellow-700 text-sm mt-1">
+                  Database persistence is disabled. Create a <code className="bg-yellow-100 px-1 rounded">.env</code> file with 
+                  <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_URL</code> and 
+                  <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to enable data persistence.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div className="mb-8">
           <div className="text-center mb-6">
             <h1 className="text-4xl font-bold text-gray-900 mb-2">
@@ -1060,10 +1105,20 @@ const MedicalInventoryStandardizer = () => {
                             <div className="flex gap-3">
                               <button
                                 onClick={() => createTerm.trim() && addNewStandardTerm(createTerm.trim())}
-                                disabled={!createTerm.trim()}
-                                className="flex-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white px-6 py-3 rounded-lg hover:from-purple-600 hover:to-pink-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all duration-200"
+                                disabled={!createTerm.trim() || isCreatingTerm}
+                                className="flex-1 bg-gradient-to-r from-purple-500 to-pink-600 text-white px-6 py-3 rounded-lg hover:from-purple-600 hover:to-pink-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2"
                               >
-                                + Add as New Term
+                                {isCreatingTerm ? (
+                                  <>
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    Creating...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Plus size={16} />
+                                    Add as New Term
+                                  </>
+                                )}
                               </button>
 
                               <button

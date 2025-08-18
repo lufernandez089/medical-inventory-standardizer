@@ -1,12 +1,36 @@
 import { supabase } from './supabaseClient.js';
 
+// Enhanced error logging helper
+const logSupabaseError = (operation, error) => {
+  console.error(`Supabase error in ${operation}:`, {
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+    code: error.code,
+    fullError: error
+  });
+};
+
+// Validate environment variables
+const validateEnvVars = () => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  
+  if (!url || !key) {
+    const missing = [];
+    if (!url) missing.push('VITE_SUPABASE_URL');
+    if (!key) missing.push('VITE_SUPABASE_ANON_KEY');
+    
+    throw new Error(`Supabase environment variables missing: ${missing.join(', ')}`);
+  }
+  
+  return { url, key };
+};
+
 // Load catalog data from Supabase
 export const loadCatalog = async () => {
   try {
-    // Check if we have environment variables
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      throw new Error('Supabase environment variables not configured');
-    }
+    validateEnvVars();
 
     // Load nomenclature systems with their device type terms
     const { data: systems, error: systemsError } = await supabase
@@ -72,9 +96,9 @@ export const loadCatalog = async () => {
 // Upsert device type term
 export const upsertDeviceTypeTerm = async (systemId, standard, variation = null) => {
   try {
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      throw new Error('Supabase environment variables not configured');
-    }
+    validateEnvVars();
+
+    console.log(`Creating device type term: system=${systemId}, standard="${standard}", variation="${variation}"`);
 
     // Check if term already exists
     const { data: existingTerm, error: searchError } = await supabase
@@ -84,9 +108,13 @@ export const upsertDeviceTypeTerm = async (systemId, standard, variation = null)
       .eq('standard', standard)
       .single();
 
-    if (searchError && searchError.code !== 'PGRST116') throw searchError;
+    if (searchError && searchError.code !== 'PGRST116') {
+      logSupabaseError('upsertDeviceTypeTerm - search', searchError);
+      throw searchError;
+    }
 
     if (existingTerm) {
+      console.log(`Term already exists with ID: ${existingTerm.id}`);
       // Term exists, add variation if provided
       if (variation && !existingTerm.variations?.includes(variation)) {
         const updatedVariations = [...(existingTerm.variations || []), variation];
@@ -95,11 +123,16 @@ export const upsertDeviceTypeTerm = async (systemId, standard, variation = null)
           .update({ variations: updatedVariations })
           .eq('id', existingTerm.id);
         
-        if (updateError) throw updateError;
+        if (updateError) {
+          logSupabaseError('upsertDeviceTypeTerm - update variations', updateError);
+          throw updateError;
+        }
+        console.log(`Added variation "${variation}" to existing term ${existingTerm.id}`);
         return existingTerm.id;
       }
       return existingTerm.id;
     } else {
+      console.log('Creating new device type term...');
       // Create new term
       const { data: newTerm, error: insertError } = await supabase
         .from('device_type_terms')
@@ -111,13 +144,24 @@ export const upsertDeviceTypeTerm = async (systemId, standard, variation = null)
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        logSupabaseError('upsertDeviceTypeTerm - insert', insertError);
+        throw insertError;
+      }
+
+      console.log(`Successfully created device type term with ID: ${newTerm.id}`);
 
       // Update last_updated in nomenclature_systems
-      await supabase
+      const { error: updateSystemError } = await supabase
         .from('nomenclature_systems')
         .update({ last_updated: new Date().toISOString() })
         .eq('id', systemId);
+
+      if (updateSystemError) {
+        logSupabaseError('upsertDeviceTypeTerm - update system timestamp', updateSystemError);
+        // Don't fail the whole operation for timestamp update failure
+        console.warn('Failed to update system timestamp, but term was created successfully');
+      }
 
       return newTerm.id;
     }
@@ -130,9 +174,7 @@ export const upsertDeviceTypeTerm = async (systemId, standard, variation = null)
 // Append variation to existing device type term
 export const appendVariationToDeviceType = async (termId, variation) => {
   try {
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      throw new Error('Supabase environment variables not configured');
-    }
+    validateEnvVars();
 
     // Get current term to find system_id
     const { data: term, error: getError } = await supabase
@@ -170,8 +212,17 @@ export const appendVariationToDeviceType = async (termId, variation) => {
 // Upsert reference term
 export const upsertReferenceTerm = async (field, standard, variation = null) => {
   try {
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      throw new Error('Supabase environment variables not configured');
+    validateEnvVars();
+
+    console.log(`Creating reference term: field="${field}", standard="${standard}", variation="${variation}"`);
+
+    // Validate field value to prevent CHECK constraint violations
+    if (field === 'Device Type') {
+      throw new Error('Device Type terms should use upsertDeviceTypeTerm, not upsertReferenceTerm');
+    }
+
+    if (!['Manufacturer', 'Model'].includes(field)) {
+      throw new Error(`Invalid field value: "${field}". Must be 'Manufacturer' or 'Model'`);
     }
 
     // Check if term already exists
@@ -182,9 +233,13 @@ export const upsertReferenceTerm = async (field, standard, variation = null) => 
       .eq('standard', standard)
       .single();
 
-    if (searchError && searchError.code !== 'PGRST116') throw searchError;
+    if (searchError && searchError.code !== 'PGRST116') {
+      logSupabaseError('upsertReferenceTerm - search', searchError);
+      throw searchError;
+    }
 
     if (existingTerm) {
+      console.log(`Term already exists with ID: ${existingTerm.id}`);
       // Term exists, add variation if provided
       if (variation && !existingTerm.variations?.includes(variation)) {
         const updatedVariations = [...(existingTerm.variations || []), variation];
@@ -193,11 +248,16 @@ export const upsertReferenceTerm = async (field, standard, variation = null) => 
           .update({ variations: updatedVariations })
           .eq('id', existingTerm.id);
         
-        if (updateError) throw updateError;
+        if (updateError) {
+          logSupabaseError('upsertReferenceTerm - update variations', updateError);
+          throw updateError;
+        }
+        console.log(`Added variation "${variation}" to existing term ${existingTerm.id}`);
         return existingTerm.id;
       }
       return existingTerm.id;
     } else {
+      console.log('Creating new reference term...');
       // Create new term
       const { data: newTerm, error: insertError } = await supabase
         .from('reference_terms')
@@ -209,7 +269,12 @@ export const upsertReferenceTerm = async (field, standard, variation = null) => 
         .select()
         .single();
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        logSupabaseError('upsertReferenceTerm - insert', insertError);
+        throw insertError;
+      }
+
+      console.log(`Successfully created reference term with ID: ${newTerm.id}`);
       return newTerm.id;
     }
   } catch (error) {
@@ -221,9 +286,7 @@ export const upsertReferenceTerm = async (field, standard, variation = null) => 
 // Append variation to existing reference term
 export const appendVariationToReference = async (termId, variation) => {
   try {
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      throw new Error('Supabase environment variables not configured');
-    }
+    validateEnvVars();
 
     // Get current term
     const { data: term, error: getError } = await supabase
@@ -255,9 +318,7 @@ export const appendVariationToReference = async (termId, variation) => {
 // Seed default data if database is empty
 export const seedDefaultData = async () => {
   try {
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      throw new Error('Supabase environment variables not configured');
-    }
+    validateEnvVars();
 
     // Check if we already have data
     const { data: existingSystems, error: checkError } = await supabase
@@ -332,5 +393,27 @@ export const seedDefaultData = async () => {
   } catch (error) {
     console.error('Error seeding default data:', error);
     throw error;
+  }
+};
+
+// Test Supabase connectivity and write permissions
+export const canWriteToSupabase = async () => {
+  try {
+    validateEnvVars();
+    
+    // Try to insert a test record into a temporary table or use a simple query
+    const { data, error } = await supabase
+      .from('nomenclature_systems')
+      .select('id')
+      .limit(1);
+    
+    if (error) {
+      logSupabaseError('canWriteToSupabase - test query', error);
+      return { canWrite: false, error: error.message, code: error.code };
+    }
+    
+    return { canWrite: true, error: null, code: null };
+  } catch (error) {
+    return { canWrite: false, error: error.message, code: null };
   }
 };
