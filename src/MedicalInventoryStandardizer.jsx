@@ -912,12 +912,8 @@ const MedicalInventoryStandardizer = () => {
                 <h3 className="text-yellow-800 font-semibold">Supabase Environment Variables Missing</h3>
                 <p className="text-yellow-700 text-sm mt-1">
                   Database persistence is disabled. Create a <code className="bg-yellow-100 px-1 rounded">.env</code> file with 
-                  <code className="bg-red-100 px-1 rounded">VITE_SUPABASE_URL</code> and 
+                  <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_URL</code> and 
                   <code className="bg-yellow-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> to enable data persistence.
-                </p>
-              </div>
-            </div>
-          </div>
                 </p>
               </div>
             </div>
