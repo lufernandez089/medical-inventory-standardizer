@@ -426,7 +426,55 @@ export const seedDefaultData = async () => {
   }
 };
 
+// Delete device type term
+export const deleteDeviceTypeTerm = async (termId) => {
+  try {
+    validateEnvVars();
 
+    console.log(`Deleting device type term: ${termId}`);
+
+    // Get the term to find its system_id before deletion
+    const { data: term, error: getError } = await supabase
+      .from('device_type_terms')
+      .select('system_id')
+      .eq('id', termId)
+      .single();
+
+    if (getError) {
+      logSupabaseError('deleteDeviceTypeTerm - get term', getError);
+      throw getError;
+    }
+
+    // Delete the term
+    const { error: deleteError } = await supabase
+      .from('device_type_terms')
+      .delete()
+      .eq('id', termId);
+
+    if (deleteError) {
+      logSupabaseError('deleteDeviceTypeTerm - delete', deleteError);
+      throw deleteError;
+    }
+
+    // Update last_updated in nomenclature_systems
+    const { error: updateSystemError } = await supabase
+      .from('nomenclature_systems')
+      .update({ last_updated: new Date().toISOString() })
+      .eq('id', term.system_id);
+
+    if (updateSystemError) {
+      logSupabaseError('deleteDeviceTypeTerm - update system timestamp', updateSystemError);
+      // Don't fail the whole operation for timestamp update failure
+      console.warn('Failed to update system timestamp, but term was deleted successfully');
+    }
+
+    console.log(`Successfully deleted device type term: ${termId}`);
+    return true;
+  } catch (error) {
+    console.error('Error deleting device type term:', error);
+    throw error;
+  }
+};
 
 // Test Supabase connectivity and write permissions
 export const canWriteToSupabase = async () => {
