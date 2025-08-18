@@ -497,3 +497,41 @@ export const canWriteToSupabase = async () => {
     return { canWrite: false, error: error.message, code: null };
   }
 };
+
+// Update device type term variations (for merging)
+export const updateDeviceTypeTermVariations = async (termId, variations) => {
+  try {
+    validateEnvVars();
+
+    const { error } = await supabase
+      .from('device_type_terms')
+      .update({ variations })
+      .eq('id', termId);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    logSupabaseError('updateDeviceTypeTermVariations', error);
+    throw error;
+  }
+};
+
+// Update nomenclature system last_updated timestamp
+export const updateNomenclatureSystemTimestamp = async (systemId) => {
+  try {
+    validateEnvVars();
+
+    const { error } = await supabase
+      .from('nomenclature_systems')
+      .update({ last_updated: new Date().toISOString() })
+      .eq('id', systemId);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    logSupabaseError('updateNomenclatureSystemTimestamp', error);
+    throw error;
+  }
+};

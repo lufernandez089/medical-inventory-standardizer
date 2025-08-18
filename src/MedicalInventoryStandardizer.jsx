@@ -5,10 +5,12 @@ import {
   upsertDeviceTypeTerm, 
   appendVariationToDeviceType, 
   upsertReferenceTerm, 
-  appendVariationToReference, 
-  seedDefaultData, 
+  appendVariationToReference,
+  seedDefaultData,
   canWriteToSupabase,
-  deleteDeviceTypeTerm
+  deleteDeviceTypeTerm,
+  updateDeviceTypeTermVariations,
+  updateNomenclatureSystemTimestamp
 } from './lib/db.js';
 
 const MedicalInventoryStandardizer = () => {
@@ -833,41 +835,37 @@ const MedicalInventoryStandardizer = () => {
       };
 
       if (type === 'deviceType') {
-        // Handle device type terms - persist to database
-        const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
-        if (!selectedSystem) {
-          showToast('No nomenclature system selected', 'error');
-          return;
+        // Handle device type terms from nomenclature systems
+        try {
+          // Update source term with combined variations
+          await updateDeviceTypeTermVariations(source.id, combinedVariations);
+          
+          // Delete target term
+          await deleteDeviceTypeTerm(target.id);
+          
+          // Update system timestamp
+          await updateNomenclatureSystemTimestamp(adminSelectedSystem);
+          
+          // Update local state
+          setNomenclatureSystems(prev => prev.map(system => {
+            if (system.id === adminSelectedSystem) {
+              return {
+                ...system,
+                lastUpdated: new Date().toISOString(),
+                deviceTypeTerms: system.deviceTypeTerms
+                  .map(term => term.id === source.id ? updatedSource : term)
+                  .filter(term => term.id !== target.id) // Remove target term
+              };
+            }
+            return system;
+          }));
+          
+          showToast(`${target.standard} merged into ${source.standard}!`);
+        } catch (error) {
+          console.error('Error merging device type terms:', error);
+          showToast(`Error merging terms: ${error.message}`, 'error');
+          return; // Don't close modal on error
         }
-
-        // Update the source term with combined variations
-        await appendVariationToDeviceType(source.id, target.standard);
-        // Add all target variations to source
-        for (const variation of target.variations) {
-          if (!combinedVariations.includes(variation)) {
-            await appendVariationToDeviceType(source.id, variation);
-          }
-        }
-
-        // Delete the target term from database
-        await deleteDeviceTypeTerm(target.id);
-
-        // Update local state
-        setNomenclatureSystems(prev => 
-          prev.map(system => 
-            system.id === adminSelectedSystem
-              ? {
-                  ...system,
-                  deviceTypeTerms: system.deviceTypeTerms
-                    .map(term => term.id === source.id ? updatedSource : term)
-                    .filter(term => term.id !== target.id), // Remove target term
-                  lastUpdated: new Date().toISOString()
-                }
-              : system
-          )
-        );
-
-        showToast(`${target.standard} merged into ${source.standard}!`);
       } else if (type === 'manufacturer') {
         // Handle manufacturer terms
         setReferenceDB(prev => ({
