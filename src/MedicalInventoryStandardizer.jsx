@@ -445,6 +445,15 @@ const MedicalInventoryStandardizer = () => {
       
       showToast('Variation added successfully');
       
+      // Update review items to reflect that this item was processed
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex) {
+          // Mark this item as processed
+          return { ...reviewItem, processed: true, action: 'accepted', matchedTerm: selectedMatch };
+        }
+        return reviewItem;
+      }));
+      
       // Move to next review with updated terms
       if (item.field === 'Device Type') {
         moveToNextReview(updatedTerms);
@@ -510,6 +519,16 @@ const MedicalInventoryStandardizer = () => {
       
       showToast('New term created successfully');
       
+      // Update review items to reflect the new term that was just added
+      // This ensures that subsequent reviews can find matches against newly added terms
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex) {
+          // Mark this item as processed
+          return { ...reviewItem, processed: true, action: 'added', newTerm };
+        }
+        return reviewItem;
+      }));
+      
       // For new terms, we need to pass the updated terms to ensure proper standardization
       if (item.field === 'Device Type') {
         // Get the updated terms including the new one
@@ -535,6 +554,14 @@ const MedicalInventoryStandardizer = () => {
   };
 
   const moveToNextReview = (updatedTerms = null, updatedReferenceTerms = null) => {
+    // Mark current item as skipped if it wasn't already processed
+    setReviewItems(prev => prev.map((reviewItem, index) => {
+      if (index === currentReviewIndex && !reviewItem.processed) {
+        return { ...reviewItem, processed: true, action: 'skipped' };
+      }
+      return reviewItem;
+    }));
+    
     if (currentReviewIndex < reviewItems.length - 1) {
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
@@ -588,6 +615,21 @@ const MedicalInventoryStandardizer = () => {
         
         result[`Original ${sourceCol}`] = originalValue;
         result[`Standardized ${sourceCol}`] = matchedTerm ? matchedTerm.standard : originalValue;
+        
+        // Add status information for skipped terms
+        if (!matchedTerm) {
+          // Check if this was a skipped term
+          const reviewItem = reviewItems.find(item => 
+            item.field === targetField && item.originalValue === originalValue
+          );
+          if (reviewItem && reviewItem.action === 'skipped') {
+            result[`Status ${sourceCol}`] = 'Skipped';
+          } else {
+            result[`Status ${sourceCol}`] = 'No Match';
+          }
+        } else {
+          result[`Status ${sourceCol}`] = 'Standardized';
+        }
       });
       
       return result;
@@ -1512,6 +1554,9 @@ const MedicalInventoryStandardizer = () => {
                                       </th>,
                                       <th key={`std-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-blue-600 uppercase tracking-wider">
                                         Standardized {originalCol}
+                                      </th>,
+                                      <th key={`status-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-purple-600 uppercase tracking-wider">
+                                        Status {originalCol}
                                       </th>
                                     ];
                                   }
@@ -1538,6 +1583,18 @@ const MedicalInventoryStandardizer = () => {
                                         </td>,
                                         <td key={`std-${originalCol}`} className="px-4 py-3 text-sm font-medium text-blue-800">
                                           {row[`Standardized ${originalCol}`] || '-'}
+                                        </td>,
+                                        <td key={`status-${originalCol}`} className="px-4 py-3 text-sm font-medium">
+                                          {(() => {
+                                            const status = row[`Status ${originalCol}`];
+                                            if (status === 'Skipped') {
+                                              return <span className="text-orange-600 bg-orange-50 px-2 py-1 rounded-full text-xs">⏭️ Skipped</span>;
+                                            } else if (status === 'No Match') {
+                                              return <span className="text-red-600 bg-red-50 px-2 py-1 rounded-full text-xs">❌ No Match</span>;
+                                            } else {
+                                              return <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-xs">✅ Standardized</span>;
+                                            }
+                                          })()}
                                         </td>
                                       ];
                                     }
@@ -1563,10 +1620,11 @@ const MedicalInventoryStandardizer = () => {
                                 headers.push(originalCol);
                                 fieldGetters.push((row) => row[originalCol] || '');
                               } else {
-                                headers.push(`Original ${originalCol}`, `Standardized ${originalCol}`);
+                                headers.push(`Original ${originalCol}`, `Standardized ${originalCol}`, `Status ${originalCol}`);
                                 fieldGetters.push(
                                   (row) => row[`Original ${originalCol}`] || '',
-                                  (row) => row[`Standardized ${originalCol}`] || ''
+                                  (row) => row[`Standardized ${originalCol}`] || '',
+                                  (row) => row[`Status ${originalCol}`] || ''
                                 );
                               }
                             });
