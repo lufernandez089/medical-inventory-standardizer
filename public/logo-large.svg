@@ -1,0 +1,40 @@
+<svg width="300" height="80" viewBox="0 0 300 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with gradient -->
+  <defs>
+    <linearGradient id="logoLargeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="iconLargeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10B981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3B82F6;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+  
+  <!-- Main icon container with shadow -->
+  <circle cx="40" cy="40" r="32" fill="url(#iconLargeGradient)" stroke="white" stroke-width="3" filter="url(#shadow)"/>
+  
+  <!-- Medical cross -->
+  <rect x="32" y="26" width="16" height="28" rx="3" fill="white"/>
+  <rect x="26" y="32" width="28" height="16" rx="3" fill="white"/>
+  
+  <!-- Standardization arrows -->
+  <path d="M60 26 L72 26 L66 20 M60 26 L72 26 L66 32" stroke="#8B5CF6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M60 54 L72 54 L66 48 M60 54 L72 54 L66 56" stroke="#8B5CF6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- App name with better typography -->
+  <text x="90" y="32" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="800" fill="#1F2937" letter-spacing="-0.5">Medical Equipment</text>
+  <text x="90" y="52" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="800" fill="#1F2937" letter-spacing="-0.5">Inventory</text>
+  <text x="90" y="72" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="800" fill="#8B5CF6" letter-spacing="-0.5">Standardizer</text>
+  
+  <!-- Decorative elements -->
+  <circle cx="260" cy="20" r="3" fill="#E5E7EB"/>
+  <circle cx="270" cy="20" r="3" fill="#D1D5DB"/>
+  <circle cx="280" cy="20" r="3" fill="#9CA3AF"/>
+  
+  <!-- Subtle line decoration -->
+  <line x1="90" y1="78" x2="250" y2="78" stroke="#E5E7EB" stroke-width="1"/>
+</svg>

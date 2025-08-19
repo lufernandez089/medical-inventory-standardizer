@@ -1035,6 +1035,10 @@ const MedicalInventoryStandardizer = () => {
         
         <div className="mb-8">
           <div className="text-center mb-6">
+            {/* Logo and Title */}
+            <div className="flex justify-center items-center mb-4">
+              <img src="/logo-large.svg" alt="Medical Equipment Inventory Standardizer Logo" className="h-16 w-auto" />
+            </div>
             <h1 className="text-4xl font-bold text-gray-900 mb-2">
               Medical Equipment Inventory Standardizer
             </h1>
