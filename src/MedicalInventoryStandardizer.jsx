@@ -445,21 +445,14 @@ const MedicalInventoryStandardizer = () => {
       
       showToast('Variation added successfully');
       
-      // Update review items to reflect that this item was processed
-      setReviewItems(prev => prev.map((reviewItem, index) => {
-        if (index === currentReviewIndex) {
-          // Mark this item as processed
-          return { ...reviewItem, processed: true, action: 'accepted', matchedTerm: selectedMatch };
-        }
-        return reviewItem;
-      }));
-      
-      // Move to next review with updated terms
-      if (item.field === 'Device Type') {
-        moveToNextReview(updatedTerms);
+      // Simple approach: just move to next review
+      // The standardization will use the updated state automatically
+      if (currentReviewIndex < reviewItems.length - 1) {
+        setCurrentReviewIndex(currentReviewIndex + 1);
+        setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
       } else {
-        // For reference terms, pass the updated reference terms
-        moveToNextReview(null, updatedTerms);
+        // All items reviewed, proceed to standardization
+        standardizeData();
       }
     } catch (error) {
       console.error('Failed to persist variation:', error);
@@ -478,12 +471,14 @@ const MedicalInventoryStandardizer = () => {
     setIsCreatingTerm(true);
     
     try {
+      let newTerm;
+      
       if (item.field === 'Device Type') {
         // Persist to database
         const termId = await upsertDeviceTypeTerm(activeNomenclatureSystem, newStandardTerm, item.originalValue);
         
         // Update local state with the new term from database
-        const newTerm = {
+        newTerm = {
           id: termId,
           standard: newStandardTerm,
           variations: [item.originalValue]
@@ -505,7 +500,7 @@ const MedicalInventoryStandardizer = () => {
         const termId = await upsertReferenceTerm(item.field, newStandardTerm, item.originalValue);
         
         // Update local state with the new term from database
-        const newTerm = {
+        newTerm = {
           id: termId,
           standard: newStandardTerm,
           variations: [item.originalValue]
@@ -519,26 +514,16 @@ const MedicalInventoryStandardizer = () => {
       
       showToast('New term created successfully');
       
-      // Update review items to reflect the new term that was just added
-      // This ensures that subsequent reviews can find matches against newly added terms
-      setReviewItems(prev => prev.map((reviewItem, index) => {
-        if (index === currentReviewIndex) {
-          // Mark this item as processed
-          return { ...reviewItem, processed: true, action: 'added', newTerm };
-        }
-        return reviewItem;
-      }));
-      
-      // For new terms, we need to pass the updated terms to ensure proper standardization
-      if (item.field === 'Device Type') {
-        // Get the updated terms including the new one
-        const updatedTerms = [...(nomenclatureSystems.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms || []), newTerm];
-        moveToNextReview(updatedTerms);
+      // Simple approach: just move to next review without complex state passing
+      // The standardization will use the updated state automatically
+      if (currentReviewIndex < reviewItems.length - 1) {
+        setCurrentReviewIndex(currentReviewIndex + 1);
+        setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
       } else {
-        // For reference terms, pass the updated reference terms
-        const updatedTerms = [...(referenceDB[item.field] || []), newTerm];
-        moveToNextReview(null, updatedTerms);
+        // All items reviewed, proceed to standardization
+        standardizeData();
       }
+      
     } catch (error) {
       console.error('Failed to create new term:', error);
       
@@ -547,43 +532,26 @@ const MedicalInventoryStandardizer = () => {
       showToast(`Failed to create new term: ${errorMessage}`, 'error');
       
       // Don't advance to next review on failure - keep user on same item
-      // moveToNextReview(); // Removed this line
     } finally {
       setIsCreatingTerm(false);
     }
   };
 
-  const moveToNextReview = (updatedTerms = null, updatedReferenceTerms = null) => {
-    // Mark current item as skipped if it wasn't already processed
-    setReviewItems(prev => {
-      const updated = prev.map((reviewItem, index) => {
-        if (index === currentReviewIndex && !reviewItem.processed) {
-          return { ...reviewItem, processed: true, action: 'skipped' };
-        }
-        return reviewItem;
-      });
-      
-      return updated;
-    });
-    
-    // Handle navigation after state update
+  const moveToNextReview = () => {
+    // Simple approach: just move to next review
     if (currentReviewIndex < reviewItems.length - 1) {
-      // Move to next review item
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
     } else {
       // All items reviewed, proceed to standardization
-      standardizeData(updatedTerms, updatedReferenceTerms);
+      standardizeData();
     }
   };
 
-  const standardizeData = (updatedDeviceTypeTerms = null, updatedReferenceTerms = null) => {
+  const standardizeData = () => {
     const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-    // Use updated terms if provided, otherwise fall back to current state
-    const deviceTypeTerms = updatedDeviceTypeTerms || activeSystem?.deviceTypeTerms || [];
-    
-    // Use updated reference terms if provided, otherwise fall back to current state
-    const currentReferenceDB = updatedReferenceTerms || referenceDB;
+    const deviceTypeTerms = activeSystem?.deviceTypeTerms || [];
+    const currentReferenceDB = referenceDB;
     
     const standardized = importedRawData.map(row => {
       const result = { ...row };
