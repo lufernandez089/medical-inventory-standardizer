@@ -460,8 +460,20 @@ const MedicalInventoryStandardizer = () => {
         setCurrentReviewIndex(currentReviewIndex + 1);
         setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
       } else {
-        // All items reviewed, proceed to standardization
-        standardizeData();
+        // All items reviewed, reload data from database and then standardize
+        showToast('All items reviewed. Reloading data from database...', 'info');
+        try {
+          const { nomenclatureSystems: freshSystems, referenceDB: freshReferenceDB } = await loadCatalog();
+          setNomenclatureSystems(freshSystems);
+          setReferenceDB(freshReferenceDB);
+          showToast('Data reloaded successfully. Standardizing...', 'success');
+          // Use a small delay to ensure state is updated
+          setTimeout(() => standardizeData(), 100);
+        } catch (error) {
+          console.error('Failed to reload data:', error);
+          showToast('Failed to reload data, using local state', 'warning');
+          standardizeData();
+        }
       }
     } catch (error) {
       console.error('Failed to persist variation:', error);
@@ -536,8 +548,20 @@ const MedicalInventoryStandardizer = () => {
         setCurrentReviewIndex(currentReviewIndex + 1);
         setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
       } else {
-        // All items reviewed, proceed to standardization
-        standardizeData();
+        // All items reviewed, reload data from database and then standardize
+        showToast('All items reviewed. Reloading data from database...', 'info');
+        try {
+          const { nomenclatureSystems: freshSystems, referenceDB: freshReferenceDB } = await loadCatalog();
+          setNomenclatureSystems(freshSystems);
+          setReferenceDB(freshReferenceDB);
+          showToast('Data reloaded successfully. Standardizing...', 'success');
+          // Use a small delay to ensure state is updated
+          setTimeout(() => standardizeData(), 100);
+        } catch (error) {
+          console.error('Failed to reload data:', error);
+          showToast('Failed to reload data, using local state', 'warning');
+          standardizeData();
+        }
       }
       
     } catch (error) {
@@ -553,7 +577,7 @@ const MedicalInventoryStandardizer = () => {
     }
   };
 
-  const moveToNextReview = () => {
+  const moveToNextReview = async () => {
     // Mark current item as skipped if it wasn't already processed
     setReviewItems(prev => prev.map((reviewItem, index) => {
       if (index === currentReviewIndex && !reviewItem.processed) {
@@ -567,8 +591,20 @@ const MedicalInventoryStandardizer = () => {
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
     } else {
-      // All items reviewed, proceed to standardization
-      standardizeData();
+      // All items reviewed, reload data from database and then standardize
+      showToast('All items reviewed. Reloading data from database...', 'info');
+      try {
+        const { nomenclatureSystems: freshSystems, referenceDB: freshReferenceDB } = await loadCatalog();
+        setNomenclatureSystems(freshSystems);
+        setReferenceDB(freshReferenceDB);
+        showToast('Data reloaded successfully. Standardizing...', 'success');
+        // Use a small delay to ensure state is updated
+        setTimeout(() => standardizeData(), 100);
+      } catch (error) {
+        console.error('Failed to reload data:', error);
+        showToast('Failed to reload data, using local state', 'warning');
+        standardizeData();
+      }
     }
   };
 
