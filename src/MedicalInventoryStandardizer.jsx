@@ -555,20 +555,26 @@ const MedicalInventoryStandardizer = () => {
 
   const moveToNextReview = (updatedTerms = null, updatedReferenceTerms = null) => {
     // Mark current item as skipped if it wasn't already processed
-    setReviewItems(prev => prev.map((reviewItem, index) => {
-      if (index === currentReviewIndex && !reviewItem.processed) {
-        return { ...reviewItem, processed: true, action: 'skipped' };
+    setReviewItems(prev => {
+      const updated = prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex && !reviewItem.processed) {
+          return { ...reviewItem, processed: true, action: 'skipped' };
+        }
+        return reviewItem;
+      });
+      
+      // Use the updated state to determine next steps
+      if (currentReviewIndex < updated.length - 1) {
+        // Move to next review item
+        setCurrentReviewIndex(currentReviewIndex + 1);
+        setCreateTerm(updated[currentReviewIndex + 1]?.originalValue || '');
+      } else {
+        // All items reviewed, proceed to standardization
+        standardizeData(updatedTerms, updatedReferenceTerms);
       }
-      return reviewItem;
-    }));
-    
-    if (currentReviewIndex < reviewItems.length - 1) {
-      setCurrentReviewIndex(currentReviewIndex + 1);
-      setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
-    } else {
-      // Pass updated terms to ensure we use the latest state
-      standardizeData(updatedTerms, updatedReferenceTerms);
-    }
+      
+      return updated;
+    });
   };
 
   const standardizeData = (updatedDeviceTypeTerms = null, updatedReferenceTerms = null) => {
