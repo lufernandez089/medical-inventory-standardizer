@@ -359,7 +359,9 @@ const MedicalInventoryStandardizer = () => {
             rowIndex: row._rowIndex,
             field: targetField,
             originalValue,
-            potentialMatches: matches
+            potentialMatches: matches,
+            processed: false,
+            action: null
           });
         }
       });
@@ -445,8 +447,15 @@ const MedicalInventoryStandardizer = () => {
       
       showToast('Variation added successfully');
       
-      // Simple approach: just move to next review
-      // The standardization will use the updated state automatically
+      // Mark this item as processed with action
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex) {
+          return { ...reviewItem, processed: true, action: 'accepted', matchedTerm: selectedMatch };
+        }
+        return reviewItem;
+      }));
+      
+      // Move to next review
       if (currentReviewIndex < reviewItems.length - 1) {
         setCurrentReviewIndex(currentReviewIndex + 1);
         setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
@@ -514,8 +523,15 @@ const MedicalInventoryStandardizer = () => {
       
       showToast('New term created successfully');
       
-      // Simple approach: just move to next review without complex state passing
-      // The standardization will use the updated state automatically
+      // Mark this item as processed with action
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex) {
+          return { ...reviewItem, processed: true, action: 'added', newTerm };
+        }
+        return reviewItem;
+      }));
+      
+      // Move to next review
       if (currentReviewIndex < reviewItems.length - 1) {
         setCurrentReviewIndex(currentReviewIndex + 1);
         setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
@@ -538,7 +554,15 @@ const MedicalInventoryStandardizer = () => {
   };
 
   const moveToNextReview = () => {
-    // Simple approach: just move to next review
+    // Mark current item as skipped if it wasn't already processed
+    setReviewItems(prev => prev.map((reviewItem, index) => {
+      if (index === currentReviewIndex && !reviewItem.processed) {
+        return { ...reviewItem, processed: true, action: 'skipped' };
+      }
+      return reviewItem;
+    }));
+    
+    // Move to next review
     if (currentReviewIndex < reviewItems.length - 1) {
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
@@ -590,19 +614,21 @@ const MedicalInventoryStandardizer = () => {
         result[`Original ${sourceCol}`] = originalValue;
         result[`Standardized ${sourceCol}`] = matchedTerm ? matchedTerm.standard : originalValue;
         
-        // Add status information for skipped terms
-        if (!matchedTerm) {
-          // Check if this was a skipped term
-          const reviewItem = reviewItems.find(item => 
-            item.field === targetField && item.originalValue === originalValue
-          );
-          if (reviewItem && reviewItem.action === 'skipped') {
-            result[`Status ${sourceCol}`] = 'Skipped';
-          } else {
-            result[`Status ${sourceCol}`] = 'No Match';
-          }
-        } else {
+        // Add status information based on review actions
+        const reviewItem = reviewItems.find(item => 
+          item.field === targetField && item.originalValue === originalValue
+        );
+        
+        if (reviewItem && reviewItem.action === 'skipped') {
+          result[`Status ${sourceCol}`] = 'Skipped';
+        } else if (reviewItem && reviewItem.action === 'added') {
+          result[`Status ${sourceCol}`] = 'Added as New Term';
+        } else if (reviewItem && reviewItem.action === 'accepted') {
           result[`Status ${sourceCol}`] = 'Standardized';
+        } else if (matchedTerm) {
+          result[`Status ${sourceCol}`] = 'Standardized';
+        } else {
+          result[`Status ${sourceCol}`] = 'No Match';
         }
       });
       
