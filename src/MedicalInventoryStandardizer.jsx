@@ -2111,6 +2111,29 @@ const MedicalInventoryStandardizer = () => {
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Merge Terms</h3>
               <p className="text-gray-600">Select the term to merge "{mergeTermData.sourceName}" into</p>
+              
+              {/* Help text for duplicate terms */}
+              {(() => {
+                let terms = [];
+                if (mergeTermData.type === 'deviceType') {
+                  const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+                  terms = selectedSystem?.deviceTypeTerms || [];
+                } else {
+                  terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+                }
+                
+                const duplicateCount = terms.filter(t => t.standard === mergeTermData.sourceName).length;
+                if (duplicateCount > 1) {
+                  return (
+                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-blue-700 text-sm">
+                        💡 Found {duplicateCount} terms with the same name. You can merge them to consolidate duplicates.
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
             
             <div className="space-y-4">
@@ -2134,11 +2157,24 @@ const MedicalInventoryStandardizer = () => {
                     }
                     
                     return terms
-                      .filter(term => term.id !== mergeTermData.sourceId)
-                      .sort((a, b) => a.standard.localeCompare(b.standard))
+                      .filter(term => {
+                        // Don't show the source term itself
+                        if (term.id === mergeTermData.sourceId) return false;
+                        
+                        // For duplicate terms with same name, show them as merge targets
+                        // This allows merging "Sterivac 5XL" into another "Sterivac 5XL"
+                        return true;
+                      })
+                      .sort((a, b) => {
+                        // Sort by name first, then by ID for stable ordering
+                        const nameCompare = a.standard.localeCompare(b.standard);
+                        if (nameCompare !== 0) return nameCompare;
+                        return a.id - b.id;
+                      })
                       .map(term => (
                         <option key={term.id} value={term.id}>
                           {term.standard}
+                          {terms.filter(t => t.standard === term.standard).length > 1 ? ' (duplicate)' : ''}
                         </option>
                       ));
                   })()}
