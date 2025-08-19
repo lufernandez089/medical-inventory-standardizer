@@ -381,13 +381,15 @@ const MedicalInventoryStandardizer = () => {
     const item = reviewItems[currentReviewIndex];
     
     try {
+      let updatedTerms;
+      
       if (item.field === 'Device Type') {
         // Persist to database
         await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
         
-        // Update local state
-        setNomenclatureSystems(prev => 
-          prev.map(system => 
+        // Update local state and capture the updated terms
+        setNomenclatureSystems(prev => {
+          const updated = prev.map(system => 
             system.id === activeNomenclatureSystem
               ? { 
                   ...system, 
@@ -399,25 +401,40 @@ const MedicalInventoryStandardizer = () => {
                   lastUpdated: new Date().toISOString()
                 }
               : system
-          )
-        );
+          );
+          
+          // Capture the updated terms for immediate use
+          const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
+          updatedTerms = activeSystem?.deviceTypeTerms || [];
+          
+          return updated;
+        });
       } else {
         // Persist to database
         await appendVariationToReference(selectedMatch.term.id, item.originalValue);
         
-        // Update local state
-        setReferenceDB(prev => ({
-          ...prev,
-          [item.field]: prev[item.field].map(term =>
-            term.id === selectedMatch.term.id
-              ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
-              : term
-          )
-        }));
+        // Update local state and capture the updated terms
+        setReferenceDB(prev => {
+          const updated = {
+            ...prev,
+            [item.field]: prev[item.field].map(term =>
+              term.id === selectedMatch.term.id
+                ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
+                : term
+            )
+          };
+          
+          // Capture the updated terms for immediate use
+          updatedTerms = updated[item.field] || [];
+          
+          return updated;
+        });
       }
       
       showToast('Variation added successfully');
-      moveToNextReview();
+      
+      // Move to next review with updated terms
+      moveToNextReview(updatedTerms);
     } catch (error) {
       console.error('Failed to persist variation:', error);
       
@@ -475,7 +492,17 @@ const MedicalInventoryStandardizer = () => {
       }
       
       showToast('New term created successfully');
-      moveToNextReview();
+      
+      // For new terms, we need to pass the updated terms to ensure proper standardization
+      if (item.field === 'Device Type') {
+        // Get the updated terms including the new one
+        const updatedTerms = [...(nomenclatureSystems.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms || []), newTerm];
+        moveToNextReview(updatedTerms);
+      } else {
+        // For reference terms, pass the updated reference terms
+        const updatedTerms = [...(referenceDB[item.field] || []), newTerm];
+        moveToNextReview(updatedTerms);
+      }
     } catch (error) {
       console.error('Failed to create new term:', error);
       
@@ -490,18 +517,20 @@ const MedicalInventoryStandardizer = () => {
     }
   };
 
-  const moveToNextReview = () => {
+  const moveToNextReview = (updatedTerms = null) => {
     if (currentReviewIndex < reviewItems.length - 1) {
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
     } else {
-      standardizeData();
+      // Pass updated terms to ensure we use the latest state
+      standardizeData(updatedTerms);
     }
   };
 
-  const standardizeData = () => {
+  const standardizeData = (updatedDeviceTypeTerms = null) => {
     const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-    const deviceTypeTerms = activeSystem?.deviceTypeTerms || [];
+    // Use updated terms if provided, otherwise fall back to current state
+    const deviceTypeTerms = updatedDeviceTypeTerms || activeSystem?.deviceTypeTerms || [];
     
     const standardized = importedRawData.map(row => {
       const result = { ...row };
