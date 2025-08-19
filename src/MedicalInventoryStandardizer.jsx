@@ -563,18 +563,18 @@ const MedicalInventoryStandardizer = () => {
         return reviewItem;
       });
       
-      // Use the updated state to determine next steps
-      if (currentReviewIndex < updated.length - 1) {
-        // Move to next review item
-        setCurrentReviewIndex(currentReviewIndex + 1);
-        setCreateTerm(updated[currentReviewIndex + 1]?.originalValue || '');
-      } else {
-        // All items reviewed, proceed to standardization
-        standardizeData(updatedTerms, updatedReferenceTerms);
-      }
-      
       return updated;
     });
+    
+    // Handle navigation after state update
+    if (currentReviewIndex < reviewItems.length - 1) {
+      // Move to next review item
+      setCurrentReviewIndex(currentReviewIndex + 1);
+      setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
+    } else {
+      // All items reviewed, proceed to standardization
+      standardizeData(updatedTerms, updatedReferenceTerms);
+    }
   };
 
   const standardizeData = (updatedDeviceTypeTerms = null, updatedReferenceTerms = null) => {
