@@ -364,7 +364,6 @@ export const appendVariationToReference = async (termId, variation) => {
     } else {
       console.log(`Variation "${variation}" already exists for reference term ${termId}`);
     }
-    }
 
     return true;
   } catch (error) {
