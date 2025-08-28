@@ -220,9 +220,21 @@ const MedicalInventoryStandardizer = () => {
   const getCurrentFieldTerms = (targetField) => {
     if (targetField === 'Device Type') {
       const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-      return activeSystem?.deviceTypeTerms || [];
+      const terms = activeSystem?.deviceTypeTerms || [];
+      console.log(`🔍 getCurrentFieldTerms("${targetField}"):`, {
+        systemFound: !!activeSystem,
+        systemId: activeNomenclatureSystem,
+        termsCount: terms.length,
+        terms: terms.map(t => ({ standard: t.standard, variations: t.variations }))
+      });
+      return terms;
     } else {
-      return referenceDB[targetField] || [];
+      const terms = referenceDB[targetField] || [];
+      console.log(`🔍 getCurrentFieldTerms("${targetField}"):`, {
+        termsCount: terms.length,
+        terms: terms.map(t => ({ standard: t.standard, variations: t.variations }))
+      });
+      return terms;
     }
   };
 
@@ -348,8 +360,6 @@ const MedicalInventoryStandardizer = () => {
       return;
     }
 
-    const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-    const deviceTypeTerms = activeSystem?.deviceTypeTerms || [];
     const reviewQueue = [];
 
     importedRawData.forEach((row) => {
@@ -359,6 +369,13 @@ const MedicalInventoryStandardizer = () => {
 
         const matches = findBestMatches(originalValue, targetField);
         const exactMatch = matches.find(match => match.score === 1.0);
+        
+        // Debug logging
+        console.log(`🔍 Analyzing "${originalValue}" for field "${targetField}":`, {
+          matches: matches.length,
+          exactMatch: exactMatch ? exactMatch.term.standard : null,
+          allMatches: matches.map(m => ({ term: m.term.standard, score: m.score, reason: m.reason }))
+        });
         
         if (!exactMatch) {
           reviewQueue.push({
