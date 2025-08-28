@@ -1214,13 +1214,25 @@ const MedicalInventoryStandardizer = () => {
                     value={importData}
                     onChange={(e) => setImportData(e.target.value)}
                   />
-                  <button
-                    onClick={processImportData}
-                    className="mt-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 flex items-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
-                  >
-                    <Upload size={20} />
-                    Load Data
-                  </button>
+                  <div className="flex gap-3 mt-4">
+                    <button
+                      onClick={processImportData}
+                      className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
+                    >
+                      <Upload size={20} />
+                      Load Data
+                    </button>
+                    <button
+                      onClick={() => setImportData('')}
+                      className="px-6 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-2 transition-all duration-200 border border-gray-300"
+                      title="Clear the input field"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Clear
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
