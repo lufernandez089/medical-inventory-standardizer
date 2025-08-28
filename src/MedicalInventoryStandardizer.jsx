@@ -417,36 +417,53 @@ const MedicalInventoryStandardizer = () => {
       
       if (item.field === 'Device Type') {
         // Persist to database
-        await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
+        console.log(`🔄 Attempting to add variation "${item.originalValue}" to term "${selectedMatch.term.standard}" (ID: ${selectedMatch.term.id})`);
         
-                  // Update local state and capture the updated terms
-          setNomenclatureSystems(prev => {
-            const updated = prev.map(system => 
-              system.id === activeNomenclatureSystem
-                ? { 
-                    ...system, 
-                    deviceTypeTerms: system.deviceTypeTerms.map(term => 
-                      term.id === selectedMatch.term.id
-                        ? { 
-                            ...term, 
-                            variations: [...new Set([
-                              ...term.variations.filter(v => v !== item.originalValue), // Remove if already exists
-                              item.originalValue
-                            ])]
-                          }
-                        : term
-                    ),
-                    lastUpdated: new Date().toISOString()
-                  }
-                : system
-            );
-            
-            // Capture the updated terms for immediate use
-            const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
-            updatedTerms = activeSystem?.deviceTypeTerms || [];
-            
-            return updated;
-          });
+        try {
+          await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
+          console.log(`✅ Database update successful for variation "${item.originalValue}"`);
+        } catch (dbError) {
+          console.error(`❌ Database update failed for variation "${item.originalValue}":`, dbError);
+          showToast(`Failed to save variation: ${dbError.message}`, 'error');
+          return; // Don't proceed if database update fails
+        }
+        
+                // Update local state and capture the updated terms
+        console.log(`🔄 Updating local state for term "${selectedMatch.term.standard}"`);
+        console.log(`🔄 Current variations:`, selectedMatch.term.variations);
+        console.log(`🔄 Adding new variation: "${item.originalValue}"`);
+        
+        setNomenclatureSystems(prev => {
+          const updated = prev.map(system => 
+            system.id === activeNomenclatureSystem
+              ? { 
+                  ...system, 
+                  deviceTypeTerms: system.deviceTypeTerms.map(term => 
+                    term.id === selectedMatch.term.id
+                      ? { 
+                          ...term, 
+                          variations: [...new Set([
+                            ...term.variations.filter(v => v !== item.originalValue), // Remove if already exists
+                            item.originalValue
+                          ])]
+                        }
+                      : term
+                  ),
+                  lastUpdated: new Date().toISOString()
+                }
+              : system
+          );
+          
+          // Capture the updated terms for immediate use
+          const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
+          updatedTerms = activeSystem?.deviceTypeTerms || [];
+          
+          console.log(`✅ Local state updated. New variations for term "${selectedMatch.term.standard}":`, 
+            updated.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms.find(t => t.id === selectedMatch.term.id)?.variations
+          );
+          
+          return updated;
+        });
       } else {
         // Persist to database
         await appendVariationToReference(selectedMatch.term.id, item.originalValue);
