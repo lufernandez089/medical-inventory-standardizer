@@ -245,14 +245,20 @@ const MedicalInventoryStandardizer = () => {
     const matches = [];
     const originalLower = originalValue.toLowerCase().trim();
     
+    console.log(`🔍 findBestMatches: "${originalValue}" -> "${originalLower}" for field "${targetField}"`);
+    console.log(`🔍 Available terms:`, fieldTerms.map(t => ({ standard: t.standard, variations: t.variations })));
+    
     if (originalLower.length < 2) return matches;
     
     for (const term of fieldTerms) {
       let bestScore = 0;
       let bestReason = '';
       
+      console.log(`🔍 Checking term: "${term.standard}" -> "${term.standard.toLowerCase()}"`);
+      
       // 1. Exact matches (highest priority)
       if (term.standard.toLowerCase() === originalLower) {
+        console.log(`✅ EXACT MATCH FOUND: "${term.standard}" = "${originalValue}"`);
         matches.push({ term, score: 1.0, reason: 'Exact match' });
         continue;
       }
