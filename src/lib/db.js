@@ -198,7 +198,6 @@ export const appendVariationToDeviceType = async (termId, variation) => {
       logSupabaseError('appendVariationToDeviceType - get term', getError);
       throw new Error(`Get term error: ${getError.message} ${getError.details ?? ''}`);
     }
-
     if (!term) {
       throw new Error(`Term with ID ${termId} not found`);
     }
@@ -341,7 +340,6 @@ export const appendVariationToReference = async (termId, variation) => {
       logSupabaseError('appendVariationToReference - get term', getError);
       throw getError;
     }
-
     if (!term) {
       throw new Error(`Reference term with ID ${termId} not found`);
     }
@@ -362,10 +360,10 @@ export const appendVariationToReference = async (termId, variation) => {
         logSupabaseError('appendVariationToReference - update variations', updateError);
         throw updateError;
       }
-
       console.log(`Successfully updated variations for reference term ${termId}`);
     } else {
       console.log(`Variation "${variation}" already exists for reference term ${termId}`);
+    }
     }
 
     return true;
