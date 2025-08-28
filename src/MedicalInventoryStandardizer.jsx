@@ -366,8 +366,6 @@ const MedicalInventoryStandardizer = () => {
       return;
     }
 
-    const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-    const deviceTypeTerms = activeSystem?.deviceTypeTerms || [];
     const reviewQueue = [];
 
     importedRawData.forEach((row) => {
@@ -436,7 +434,7 @@ const MedicalInventoryStandardizer = () => {
         console.log(`🔄 Adding new variation: "${item.originalValue}"`);
         
         setNomenclatureSystems(prev => {
-            const updated = prev.map(system => 
+const updated = prev.map(system => 
               system.id === activeNomenclatureSystem
                 ? { 
                     ...system, 
@@ -456,15 +454,15 @@ const MedicalInventoryStandardizer = () => {
                 : system
             );
             
-                      // Capture the updated terms for immediate use
-          const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
-          updatedTerms = activeSystem?.deviceTypeTerms || [];
-          
-          console.log(`✅ Local state updated. New variations for term "${selectedMatch.term.standard}":`, 
-            updated.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms.find(t => t.id === selectedMatch.term.id)?.variations
-          );
-          
-          return updated;
+            // Capture the updated terms for immediate use
+            const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
+            updatedTerms = activeSystem?.deviceTypeTerms || [];
+            
+            console.log(`✅ Local state updated. New variations for term "${selectedMatch.term.standard}":`, 
+              updated.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms.find(t => t.id === selectedMatch.term.id)?.variations
+            );
+            
+            return updated;
           });
       } else {
         // Persist to database
