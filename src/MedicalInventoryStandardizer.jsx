@@ -216,8 +216,20 @@ const MedicalInventoryStandardizer = () => {
     }
   };
 
+  // Get current field terms including newly added ones during the session
+  const getCurrentFieldTerms = (targetField) => {
+    if (targetField === 'Device Type') {
+      const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
+      return activeSystem?.deviceTypeTerms || [];
+    } else {
+      return referenceDB[targetField] || [];
+    }
+  };
+
   // Enhanced fuzzy matching with multiple algorithms
-  const findBestMatches = (originalValue, fieldTerms) => {
+  const findBestMatches = (originalValue, targetField) => {
+    // Get current field terms (including newly added ones)
+    const fieldTerms = getCurrentFieldTerms(targetField);
     const matches = [];
     const originalLower = originalValue.toLowerCase().trim();
     
@@ -345,14 +357,7 @@ const MedicalInventoryStandardizer = () => {
         const originalValue = row[sourceCol];
         if (!originalValue || targetField === 'Reference Field') return;
 
-        let fieldTerms = [];
-        if (targetField === 'Device Type') {
-          fieldTerms = deviceTypeTerms;
-        } else {
-          fieldTerms = referenceDB[targetField] || [];
-        }
-
-        const matches = findBestMatches(originalValue, fieldTerms);
+        const matches = findBestMatches(originalValue, targetField);
         const exactMatch = matches.find(match => match.score === 1.0);
         
         if (!exactMatch) {
@@ -648,9 +653,6 @@ const MedicalInventoryStandardizer = () => {
   };
 
   const standardizeData = () => {
-    const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-    const deviceTypeTerms = activeSystem?.deviceTypeTerms || [];
-    const currentReferenceDB = referenceDB;
     
     const standardized = importedRawData.map(row => {
       const result = { ...row };
@@ -670,12 +672,8 @@ const MedicalInventoryStandardizer = () => {
           return;
         }
         
-        let fieldTerms = [];
-        if (targetField === 'Device Type') {
-          fieldTerms = deviceTypeTerms;
-        } else {
-          fieldTerms = currentReferenceDB[targetField] || [];
-        }
+        // Get current field terms (including newly added ones)
+        const fieldTerms = getCurrentFieldTerms(targetField);
         
         let matchedTerm = null;
         for (const term of fieldTerms) {
