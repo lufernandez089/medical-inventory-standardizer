@@ -67,6 +67,7 @@ const MedicalInventoryStandardizer = () => {
   const [reviewItems, setReviewItems] = useState([]);
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
   const [createTerm, setCreateTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Admin states
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -373,6 +374,7 @@ const MedicalInventoryStandardizer = () => {
       setReviewItems(reviewQueue);
       setCurrentReviewIndex(0);
       setCreateTerm(reviewQueue[0]?.originalValue || '');
+      setSearchTerm(''); // Reset search term for new review session
       setActiveTab('review');
       showToast(`${reviewQueue.length} terms need review`, 'info');
     }
@@ -455,10 +457,28 @@ const MedicalInventoryStandardizer = () => {
         return reviewItem;
       }));
       
+      // Update review items to mark any subsequent items with the same value as already processed
+      // This prevents users from having to review the same term multiple times in the same session
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index > currentReviewIndex && 
+            reviewItem.field === item.field && 
+            reviewItem.originalValue === item.originalValue &&
+            !reviewItem.processed) {
+          return { 
+            ...reviewItem, 
+            processed: true, 
+            action: 'auto-matched', 
+            matchedTerm: { term: selectedMatch.term, score: 1.0, reason: 'Auto-matched from accepted suggestion' }
+          };
+        }
+        return reviewItem;
+      }));
+      
       // Move to next review
       if (currentReviewIndex < reviewItems.length - 1) {
         setCurrentReviewIndex(currentReviewIndex + 1);
         setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
+        setSearchTerm(''); // Reset search term for next item
       } else {
         // All items reviewed, reload data from database and then standardize
         showToast('All items reviewed. Reloading data from database...', 'info');
@@ -543,10 +563,28 @@ const MedicalInventoryStandardizer = () => {
         return reviewItem;
       }));
       
+      // Update review items to mark any subsequent items with the same value as already processed
+      // This prevents users from having to add the same term multiple times in the same session
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index > currentReviewIndex && 
+            reviewItem.field === item.field && 
+            reviewItem.originalValue === item.originalValue &&
+            !reviewItem.processed) {
+          return { 
+            ...reviewItem, 
+            processed: true, 
+            action: 'auto-matched', 
+            matchedTerm: { term: newTerm, score: 1.0, reason: 'Auto-matched from newly added term' }
+          };
+        }
+        return reviewItem;
+      }));
+      
       // Move to next review
       if (currentReviewIndex < reviewItems.length - 1) {
         setCurrentReviewIndex(currentReviewIndex + 1);
         setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
+        setSearchTerm(''); // Reset search term for next item
       } else {
         // All items reviewed, reload data from database and then standardize
         showToast('All items reviewed. Reloading data from database...', 'info');
@@ -590,6 +628,7 @@ const MedicalInventoryStandardizer = () => {
     if (currentReviewIndex < reviewItems.length - 1) {
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
+      setSearchTerm(''); // Reset search term for next item
     } else {
       // All items reviewed, reload data from database and then standardize
       showToast('All items reviewed. Reloading data from database...', 'info');
@@ -661,6 +700,8 @@ const MedicalInventoryStandardizer = () => {
           result[`Status ${sourceCol}`] = 'Added as New Term';
         } else if (reviewItem && reviewItem.action === 'accepted') {
           result[`Status ${sourceCol}`] = 'Standardized';
+        } else if (reviewItem && reviewItem.action === 'auto-matched') {
+          result[`Status ${sourceCol}`] = 'Auto-Matched';
         } else if (matchedTerm) {
           result[`Status ${sourceCol}`] = 'Standardized';
         } else {
@@ -1495,6 +1536,99 @@ const MedicalInventoryStandardizer = () => {
                             </div>
                           )}
 
+                          {/* Search Within Nomenclature Terms */}
+                          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
+                            <h4 className="font-semibold text-orange-800 mb-3 flex items-center gap-2">
+                              🔍 Search Within Nomenclature Terms
+                              <span className="text-sm font-normal text-orange-600">
+                                Browse and search available terms in this field
+                              </span>
+                            </h4>
+                            
+                            <div className="mb-3">
+                              <div className="relative">
+                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                                <input
+                                  type="text"
+                                  placeholder="Search for terms..."
+                                  value={searchTerm || ''}
+                                  onChange={(e) => setSearchTerm(e.target.value)}
+                                  className="w-full pl-10 pr-4 py-2 border border-orange-200 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="max-h-48 overflow-y-auto space-y-2">
+                              {(() => {
+                                let terms = [];
+                                if (reviewItems[currentReviewIndex].field === 'Device Type') {
+                                  // Get terms from active nomenclature system
+                                  const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
+                                  terms = activeSystem?.deviceTypeTerms || [];
+                                } else {
+                                  // Get terms from reference database
+                                  terms = referenceDB[reviewItems[currentReviewIndex].field] || [];
+                                }
+                                
+                                // Filter by search term if provided
+                                const filteredTerms = searchTerm 
+                                  ? terms.filter(term => 
+                                      term.standard.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                      term.variations.some(v => v.toLowerCase().includes(searchTerm.toLowerCase()))
+                                    )
+                                  : terms.slice(0, 10); // Show first 10 by default
+                                
+                                return filteredTerms.length > 0 ? (
+                                  filteredTerms.map((term, index) => (
+                                    <div key={index} className="bg-white border border-orange-200 rounded-lg p-3 flex items-center justify-between hover:border-orange-300 transition-colors">
+                                      <div className="flex-1">
+                                        <div className="font-medium text-gray-900">{term.standard}</div>
+                                        {term.variations.length > 0 && (
+                                          <div className="text-xs text-gray-500 mt-1">
+                                            Variations: {term.variations.slice(0, 3).join(', ')}
+                                            {term.variations.length > 3 && ` +${term.variations.length - 3} more`}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <button
+                                        onClick={() => acceptSuggestion({ term, score: 1.0, reason: 'Manually selected from nomenclature' })}
+                                        className="ml-3 bg-gradient-to-r from-orange-500 to-red-600 text-white px-3 py-2 rounded-lg hover:from-orange-600 hover:to-red-700 transition-all duration-200 text-sm font-medium"
+                                      >
+                                        ✓ Select
+                                      </button>
+                                    </div>
+                                  ))
+                                ) : searchTerm ? (
+                                  <div className="text-center py-4 text-gray-500 text-sm">
+                                    No terms found matching "{searchTerm}"
+                                  </div>
+                                ) : (
+                                  <div className="text-center py-4 text-gray-500 text-sm">
+                                    No terms available in this field
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                            
+                            {(() => {
+                              let totalTerms = 0;
+                              if (reviewItems[currentReviewIndex].field === 'Device Type') {
+                                const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
+                                totalTerms = activeSystem?.deviceTypeTerms?.length || 0;
+                              } else {
+                                totalTerms = referenceDB[reviewItems[currentReviewIndex].field]?.length || 0;
+                              }
+                              
+                              return totalTerms > 10 && (
+                                <div className="mt-3 text-center">
+                                  <div className="text-xs text-orange-600">
+                                    {searchTerm ? 'Searching all terms' : `Showing first 10 of ${totalTerms} total terms`}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+
                           <div className="bg-white border-2 border-gray-300 rounded-xl p-6">
                             <h4 className="font-semibold text-gray-800 mb-4">Create New Standard Term</h4>
                             
@@ -1639,6 +1773,10 @@ const MedicalInventoryStandardizer = () => {
                                               return <span className="text-orange-600 bg-orange-50 px-2 py-1 rounded-full text-xs">⏭️ Skipped</span>;
                                             } else if (status === 'No Match') {
                                               return <span className="text-red-600 bg-red-50 px-2 py-1 rounded-full text-xs">❌ No Match</span>;
+                                            } else if (status === 'Added as New Term') {
+                                              return <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-full text-xs">🆕 Added as New Term</span>;
+                                            } else if (status === 'Auto-Matched') {
+                                              return <span className="text-purple-600 bg-purple-50 px-2 py-1 rounded-full text-xs">🔄 Auto-Matched</span>;
                                             } else {
                                               return <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-xs">✅ Standardized</span>;
                                             }
