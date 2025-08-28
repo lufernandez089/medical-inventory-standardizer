@@ -220,9 +220,21 @@ const MedicalInventoryStandardizer = () => {
   const getCurrentFieldTerms = (targetField) => {
     if (targetField === 'Device Type') {
       const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
-      return activeSystem?.deviceTypeTerms || [];
+      const terms = activeSystem?.deviceTypeTerms || [];
+      console.log(`🔍 getCurrentFieldTerms("${targetField}"):`, {
+        systemFound: !!activeSystem,
+        systemId: activeNomenclatureSystem,
+        termsCount: terms.length,
+        terms: terms.map(t => ({ standard: t.standard, variations: t.variations }))
+      });
+      return terms;
     } else {
-      return referenceDB[targetField] || [];
+      const terms = referenceDB[targetField] || [];
+      console.log(`🔍 getCurrentFieldTerms("${targetField}"):`, {
+        termsCount: terms.length,
+        terms: terms.map(t => ({ standard: t.standard, variations: t.variations }))
+      });
+      return terms;
     }
   };
 
@@ -233,14 +245,20 @@ const MedicalInventoryStandardizer = () => {
     const matches = [];
     const originalLower = originalValue.toLowerCase().trim();
     
+    console.log(`🔍 findBestMatches: "${originalValue}" -> "${originalLower}" for field "${targetField}"`);
+    console.log(`🔍 Available terms:`, fieldTerms.map(t => ({ standard: t.standard, variations: t.variations })));
+    
     if (originalLower.length < 2) return matches;
     
     for (const term of fieldTerms) {
       let bestScore = 0;
       let bestReason = '';
       
+      console.log(`🔍 Checking term: "${term.standard}" -> "${term.standard.toLowerCase()}"`);
+      
       // 1. Exact matches (highest priority)
       if (term.standard.toLowerCase() === originalLower) {
+        console.log(`✅ EXACT MATCH FOUND: "${term.standard}" = "${originalValue}"`);
         matches.push({ term, score: 1.0, reason: 'Exact match' });
         continue;
       }
@@ -360,6 +378,13 @@ const MedicalInventoryStandardizer = () => {
         const matches = findBestMatches(originalValue, targetField);
         const exactMatch = matches.find(match => match.score === 1.0);
         
+        // Debug logging
+        console.log(`🔍 Analyzing "${originalValue}" for field "${targetField}":`, {
+          matches: matches.length,
+          exactMatch: exactMatch ? exactMatch.term.standard : null,
+          allMatches: matches.map(m => ({ term: m.term.standard, score: m.score, reason: m.reason }))
+        });
+        
         if (!exactMatch) {
           reviewQueue.push({
             rowIndex: row._rowIndex,
@@ -394,10 +419,23 @@ const MedicalInventoryStandardizer = () => {
       
       if (item.field === 'Device Type') {
         // Persist to database
-        await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
+        console.log(`🔄 Attempting to add variation "${item.originalValue}" to term "${selectedMatch.term.standard}" (ID: ${selectedMatch.term.id})`);
         
-                  // Update local state and capture the updated terms
-          setNomenclatureSystems(prev => {
+        try {
+          await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
+          console.log(`✅ Database update successful for variation "${item.originalValue}"`);
+        } catch (dbError) {
+          console.error(`❌ Database update failed for variation "${item.originalValue}":`, dbError);
+          showToast(`Failed to save variation: ${dbError.message}`, 'error');
+          return; // Don't proceed if database update fails
+        }
+        
+                // Update local state and capture the updated terms
+        console.log(`🔄 Updating local state for term "${selectedMatch.term.standard}"`);
+        console.log(`🔄 Current variations:`, selectedMatch.term.variations);
+        console.log(`🔄 Adding new variation: "${item.originalValue}"`);
+        
+        setNomenclatureSystems(prev => {
             const updated = prev.map(system => 
               system.id === activeNomenclatureSystem
                 ? { 
@@ -418,11 +456,15 @@ const MedicalInventoryStandardizer = () => {
                 : system
             );
             
-            // Capture the updated terms for immediate use
-            const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
-            updatedTerms = activeSystem?.deviceTypeTerms || [];
-            
-            return updated;
+                      // Capture the updated terms for immediate use
+          const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
+          updatedTerms = activeSystem?.deviceTypeTerms || [];
+          
+          console.log(`✅ Local state updated. New variations for term "${selectedMatch.term.standard}":`, 
+            updated.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms.find(t => t.id === selectedMatch.term.id)?.variations
+          );
+          
+          return updated;
           });
       } else {
         // Persist to database
