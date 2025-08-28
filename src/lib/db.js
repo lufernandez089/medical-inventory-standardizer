@@ -185,10 +185,12 @@ export const appendVariationToDeviceType = async (termId, variation) => {
   try {
     validateEnvVars();
 
+    console.log(`Appending variation "${variation}" to device type term ID: ${termId}`);
+
     // Get current term to find system_id
     const { data: term, error: getError } = await supabase
       .from('device_type_terms')
-      .select('*, nomenclature_systems!inner(id)')
+      .select('*')
       .eq('id', termId)
       .single();
 
@@ -196,10 +198,17 @@ export const appendVariationToDeviceType = async (termId, variation) => {
       logSupabaseError('appendVariationToDeviceType - get term', getError);
       throw new Error(`Get term error: ${getError.message} ${getError.details ?? ''}`);
     }
+    if (!term) {
+      throw new Error(`Term with ID ${termId} not found`);
+    }
+
+    console.log(`Found term:`, term);
 
     // Add variation if not already present
     const currentVariations = term.variations || [];
     if (!currentVariations.includes(variation)) {
+      console.log(`Adding variation "${variation}" to existing variations:`, currentVariations);
+      
       const { error: updateError } = await supabase
         .from('device_type_terms')
         .update({ variations: [...currentVariations, variation] })
@@ -210,11 +219,26 @@ export const appendVariationToDeviceType = async (termId, variation) => {
         throw new Error(`Update variations error: ${updateError.message} ${updateError.details ?? ''}`);
       }
 
-      // Update last_updated in nomenclature_systems
-      await supabase
-        .from('nomenclature_systems')
-        .update({ last_updated: new Date().toISOString() })
-        .eq('id', term.nomenclature_systems.id);
+      console.log(`Successfully updated variations for term ${termId}`);
+
+      // Update last_updated in nomenclature_systems using system_id
+      if (term.system_id) {
+        const { error: updateSystemError } = await supabase
+          .from('nomenclature_systems')
+          .update({ last_updated: new Date().toISOString() })
+          .eq('id', term.system_id);
+
+        if (updateSystemError) {
+          logSupabaseError('appendVariationToDeviceType - update system timestamp', updateSystemError);
+          console.warn('Failed to update system timestamp, but variation was added successfully');
+        } else {
+          console.log(`Updated system timestamp for system ${term.system_id}`);
+        }
+      } else {
+        console.warn('No system_id found for term');
+      }
+    } else {
+      console.log(`Variation "${variation}" already exists for term ${termId}`);
     }
 
     return true;
@@ -303,6 +327,8 @@ export const appendVariationToReference = async (termId, variation) => {
   try {
     validateEnvVars();
 
+    console.log(`Appending variation "${variation}" to reference term ID: ${termId}`);
+
     // Get current term
     const { data: term, error: getError } = await supabase
       .from('reference_terms')
@@ -314,10 +340,17 @@ export const appendVariationToReference = async (termId, variation) => {
       logSupabaseError('appendVariationToReference - get term', getError);
       throw getError;
     }
+    if (!term) {
+      throw new Error(`Reference term with ID ${termId} not found`);
+    }
+
+    console.log(`Found reference term:`, term);
 
     // Add variation if not already present
     const currentVariations = term.variations || [];
     if (!currentVariations.includes(variation)) {
+      console.log(`Adding variation "${variation}" to existing variations:`, currentVariations);
+      
       const { error: updateError } = await supabase
         .from('reference_terms')
         .update({ variations: [...currentVariations, variation] })
@@ -327,6 +360,9 @@ export const appendVariationToReference = async (termId, variation) => {
         logSupabaseError('appendVariationToReference - update variations', updateError);
         throw updateError;
       }
+      console.log(`Successfully updated variations for reference term ${termId}`);
+    } else {
+      console.log(`Variation "${variation}" already exists for reference term ${termId}`);
     }
 
     return true;

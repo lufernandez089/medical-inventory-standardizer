@@ -359,7 +359,9 @@ const MedicalInventoryStandardizer = () => {
             rowIndex: row._rowIndex,
             field: targetField,
             originalValue,
-            potentialMatches: matches
+            potentialMatches: matches,
+            processed: false,
+            action: null
           });
         }
       });
@@ -381,43 +383,98 @@ const MedicalInventoryStandardizer = () => {
     const item = reviewItems[currentReviewIndex];
     
     try {
+      let updatedTerms;
+      
       if (item.field === 'Device Type') {
         // Persist to database
         await appendVariationToDeviceType(selectedMatch.term.id, item.originalValue);
         
-        // Update local state
-        setNomenclatureSystems(prev => 
-          prev.map(system => 
-            system.id === activeNomenclatureSystem
-              ? { 
-                  ...system, 
-                  deviceTypeTerms: system.deviceTypeTerms.map(term => 
-                    term.id === selectedMatch.term.id
-                      ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
-                      : term
-                  ),
-                  lastUpdated: new Date().toISOString()
-                }
-              : system
-          )
-        );
+                  // Update local state and capture the updated terms
+          setNomenclatureSystems(prev => {
+            const updated = prev.map(system => 
+              system.id === activeNomenclatureSystem
+                ? { 
+                    ...system, 
+                    deviceTypeTerms: system.deviceTypeTerms.map(term => 
+                      term.id === selectedMatch.term.id
+                        ? { 
+                            ...term, 
+                            variations: [...new Set([
+                              ...term.variations.filter(v => v !== item.originalValue), // Remove if already exists
+                              item.originalValue
+                            ])]
+                          }
+                        : term
+                    ),
+                    lastUpdated: new Date().toISOString()
+                  }
+                : system
+            );
+            
+            // Capture the updated terms for immediate use
+            const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
+            updatedTerms = activeSystem?.deviceTypeTerms || [];
+            
+            return updated;
+          });
       } else {
         // Persist to database
         await appendVariationToReference(selectedMatch.term.id, item.originalValue);
         
-        // Update local state
-        setReferenceDB(prev => ({
-          ...prev,
-          [item.field]: prev[item.field].map(term =>
-            term.id === selectedMatch.term.id
-              ? { ...term, variations: [...new Set([...term.variations, item.originalValue])] }
-              : term
-          )
-        }));
+        // Update local state and capture the updated terms
+        setReferenceDB(prev => {
+          const updated = {
+            ...prev,
+            [item.field]: prev[item.field].map(term =>
+              term.id === selectedMatch.term.id
+                ? { 
+                    ...term, 
+                    variations: [...new Set([
+                      ...term.variations.filter(v => v !== item.originalValue), // Remove if already exists
+                      item.originalValue
+                    ])]
+                  }
+                : term
+            )
+          };
+          
+          // Capture the updated terms for immediate use
+          updatedTerms = updated[item.field] || [];
+          
+          return updated;
+        });
       }
       
       showToast('Variation added successfully');
-      moveToNextReview();
+      
+      // Mark this item as processed with action
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex) {
+          return { ...reviewItem, processed: true, action: 'accepted', matchedTerm: selectedMatch };
+        }
+        return reviewItem;
+      }));
+      
+      // Move to next review
+      if (currentReviewIndex < reviewItems.length - 1) {
+        setCurrentReviewIndex(currentReviewIndex + 1);
+        setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
+      } else {
+        // All items reviewed, reload data from database and then standardize
+        showToast('All items reviewed. Reloading data from database...', 'info');
+        try {
+          const { nomenclatureSystems: freshSystems, referenceDB: freshReferenceDB } = await loadCatalog();
+          setNomenclatureSystems(freshSystems);
+          setReferenceDB(freshReferenceDB);
+          showToast('Data reloaded successfully. Standardizing...', 'success');
+          // Use a small delay to ensure state is updated
+          setTimeout(() => standardizeData(), 100);
+        } catch (error) {
+          console.error('Failed to reload data:', error);
+          showToast('Failed to reload data, using local state', 'warning');
+          standardizeData();
+        }
+      }
     } catch (error) {
       console.error('Failed to persist variation:', error);
       
@@ -435,12 +492,14 @@ const MedicalInventoryStandardizer = () => {
     setIsCreatingTerm(true);
     
     try {
+      let newTerm;
+      
       if (item.field === 'Device Type') {
         // Persist to database
         const termId = await upsertDeviceTypeTerm(activeNomenclatureSystem, newStandardTerm, item.originalValue);
         
         // Update local state with the new term from database
-        const newTerm = {
+        newTerm = {
           id: termId,
           standard: newStandardTerm,
           variations: [item.originalValue]
@@ -462,7 +521,7 @@ const MedicalInventoryStandardizer = () => {
         const termId = await upsertReferenceTerm(item.field, newStandardTerm, item.originalValue);
         
         // Update local state with the new term from database
-        const newTerm = {
+        newTerm = {
           id: termId,
           standard: newStandardTerm,
           variations: [item.originalValue]
@@ -475,7 +534,36 @@ const MedicalInventoryStandardizer = () => {
       }
       
       showToast('New term created successfully');
-      moveToNextReview();
+      
+      // Mark this item as processed with action
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index === currentReviewIndex) {
+          return { ...reviewItem, processed: true, action: 'added', newTerm };
+        }
+        return reviewItem;
+      }));
+      
+      // Move to next review
+      if (currentReviewIndex < reviewItems.length - 1) {
+        setCurrentReviewIndex(currentReviewIndex + 1);
+        setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
+      } else {
+        // All items reviewed, reload data from database and then standardize
+        showToast('All items reviewed. Reloading data from database...', 'info');
+        try {
+          const { nomenclatureSystems: freshSystems, referenceDB: freshReferenceDB } = await loadCatalog();
+          setNomenclatureSystems(freshSystems);
+          setReferenceDB(freshReferenceDB);
+          showToast('Data reloaded successfully. Standardizing...', 'success');
+          // Use a small delay to ensure state is updated
+          setTimeout(() => standardizeData(), 100);
+        } catch (error) {
+          console.error('Failed to reload data:', error);
+          showToast('Failed to reload data, using local state', 'warning');
+          standardizeData();
+        }
+      }
+      
     } catch (error) {
       console.error('Failed to create new term:', error);
       
@@ -484,24 +572,46 @@ const MedicalInventoryStandardizer = () => {
       showToast(`Failed to create new term: ${errorMessage}`, 'error');
       
       // Don't advance to next review on failure - keep user on same item
-      // moveToNextReview(); // Removed this line
     } finally {
       setIsCreatingTerm(false);
     }
   };
 
-  const moveToNextReview = () => {
+  const moveToNextReview = async () => {
+    // Mark current item as skipped if it wasn't already processed
+    setReviewItems(prev => prev.map((reviewItem, index) => {
+      if (index === currentReviewIndex && !reviewItem.processed) {
+        return { ...reviewItem, processed: true, action: 'skipped' };
+      }
+      return reviewItem;
+    }));
+    
+    // Move to next review
     if (currentReviewIndex < reviewItems.length - 1) {
       setCurrentReviewIndex(currentReviewIndex + 1);
       setCreateTerm(reviewItems[currentReviewIndex + 1]?.originalValue || '');
     } else {
-      standardizeData();
+      // All items reviewed, reload data from database and then standardize
+      showToast('All items reviewed. Reloading data from database...', 'info');
+      try {
+        const { nomenclatureSystems: freshSystems, referenceDB: freshReferenceDB } = await loadCatalog();
+        setNomenclatureSystems(freshSystems);
+        setReferenceDB(freshReferenceDB);
+        showToast('Data reloaded successfully. Standardizing...', 'success');
+        // Use a small delay to ensure state is updated
+        setTimeout(() => standardizeData(), 100);
+      } catch (error) {
+        console.error('Failed to reload data:', error);
+        showToast('Failed to reload data, using local state', 'warning');
+        standardizeData();
+      }
     }
   };
 
   const standardizeData = () => {
     const activeSystem = nomenclatureSystems.find(s => s.id === activeNomenclatureSystem);
     const deviceTypeTerms = activeSystem?.deviceTypeTerms || [];
+    const currentReferenceDB = referenceDB;
     
     const standardized = importedRawData.map(row => {
       const result = { ...row };
@@ -516,8 +626,8 @@ const MedicalInventoryStandardizer = () => {
         }
         
         if (!originalValue) {
-          result[`Original ${targetField}`] = '';
-          result[`Standardized ${targetField}`] = '';
+          result[`Original ${sourceCol}`] = '';
+          result[`Standardized ${sourceCol}`] = '';
           return;
         }
         
@@ -525,7 +635,7 @@ const MedicalInventoryStandardizer = () => {
         if (targetField === 'Device Type') {
           fieldTerms = deviceTypeTerms;
         } else {
-          fieldTerms = referenceDB[targetField] || [];
+          fieldTerms = currentReferenceDB[targetField] || [];
         }
         
         let matchedTerm = null;
@@ -537,8 +647,25 @@ const MedicalInventoryStandardizer = () => {
           }
         }
         
-        result[`Original ${targetField}`] = originalValue;
-        result[`Standardized ${targetField}`] = matchedTerm ? matchedTerm.standard : originalValue;
+        result[`Original ${sourceCol}`] = originalValue;
+        result[`Standardized ${sourceCol}`] = matchedTerm ? matchedTerm.standard : originalValue;
+        
+        // Add status information based on review actions
+        const reviewItem = reviewItems.find(item => 
+          item.field === targetField && item.originalValue === originalValue
+        );
+        
+        if (reviewItem && reviewItem.action === 'skipped') {
+          result[`Status ${sourceCol}`] = 'Skipped';
+        } else if (reviewItem && reviewItem.action === 'added') {
+          result[`Status ${sourceCol}`] = 'Added as New Term';
+        } else if (reviewItem && reviewItem.action === 'accepted') {
+          result[`Status ${sourceCol}`] = 'Standardized';
+        } else if (matchedTerm) {
+          result[`Status ${sourceCol}`] = 'Standardized';
+        } else {
+          result[`Status ${sourceCol}`] = 'No Match';
+        }
       });
       
       return result;
@@ -1006,6 +1133,10 @@ const MedicalInventoryStandardizer = () => {
         
         <div className="mb-8">
           <div className="text-center mb-6">
+            {/* Logo and Title */}
+            <div className="flex justify-center items-center mb-4">
+              <img src="/logo-large.svg" alt="Medical Equipment Inventory Standardizer Logo" className="h-16 w-auto" />
+            </div>
             <h1 className="text-4xl font-bold text-gray-900 mb-2">
               Medical Equipment Inventory Standardizer
             </h1>
@@ -1083,13 +1214,25 @@ const MedicalInventoryStandardizer = () => {
                     value={importData}
                     onChange={(e) => setImportData(e.target.value)}
                   />
-                  <button
-                    onClick={processImportData}
-                    className="mt-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 flex items-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
-                  >
-                    <Upload size={20} />
-                    Load Data
-                  </button>
+                  <div className="flex gap-3 mt-4">
+                    <button
+                      onClick={processImportData}
+                      className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
+                    >
+                      <Upload size={20} />
+                      Load Data
+                    </button>
+                    <button
+                      onClick={() => setImportData('')}
+                      className="px-6 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 flex items-center gap-2 transition-all duration-200 border border-gray-300"
+                      title="Clear the input field"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Clear
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1455,10 +1598,13 @@ const MedicalInventoryStandardizer = () => {
                                   } else {
                                     return [
                                       <th key={`orig-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Original {mapping}
+                                        Original {originalCol}
                                       </th>,
                                       <th key={`std-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-blue-600 uppercase tracking-wider">
-                                        Standardized {mapping}
+                                        Standardized {originalCol}
+                                      </th>,
+                                      <th key={`status-${originalCol}`} className="px-4 py-3 text-left text-xs font-medium text-purple-600 uppercase tracking-wider">
+                                        Status {originalCol}
                                       </th>
                                     ];
                                   }
@@ -1481,10 +1627,22 @@ const MedicalInventoryStandardizer = () => {
                                     } else {
                                       return [
                                         <td key={`orig-${originalCol}`} className="px-4 py-3 text-sm text-gray-600">
-                                          {row[`Original ${mapping}`] || '-'}
+                                          {row[`Original ${originalCol}`] || '-'}
                                         </td>,
                                         <td key={`std-${originalCol}`} className="px-4 py-3 text-sm font-medium text-blue-800">
-                                          {row[`Standardized ${mapping}`] || '-'}
+                                          {row[`Standardized ${originalCol}`] || '-'}
+                                        </td>,
+                                        <td key={`status-${originalCol}`} className="px-4 py-3 text-sm font-medium">
+                                          {(() => {
+                                            const status = row[`Status ${originalCol}`];
+                                            if (status === 'Skipped') {
+                                              return <span className="text-orange-600 bg-orange-50 px-2 py-1 rounded-full text-xs">⏭️ Skipped</span>;
+                                            } else if (status === 'No Match') {
+                                              return <span className="text-red-600 bg-red-50 px-2 py-1 rounded-full text-xs">❌ No Match</span>;
+                                            } else {
+                                              return <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-xs">✅ Standardized</span>;
+                                            }
+                                          })()}
                                         </td>
                                       ];
                                     }
@@ -1510,10 +1668,11 @@ const MedicalInventoryStandardizer = () => {
                                 headers.push(originalCol);
                                 fieldGetters.push((row) => row[originalCol] || '');
                               } else {
-                                headers.push(`Original ${mapping}`, `Standardized ${mapping}`);
+                                headers.push(`Original ${originalCol}`, `Standardized ${originalCol}`, `Status ${originalCol}`);
                                 fieldGetters.push(
-                                  (row) => row[`Original ${mapping}`] || '',
-                                  (row) => row[`Standardized ${mapping}`] || ''
+                                  (row) => row[`Original ${originalCol}`] || '',
+                                  (row) => row[`Standardized ${originalCol}`] || '',
+                                  (row) => row[`Status ${originalCol}`] || ''
                                 );
                               }
                             });
@@ -2082,6 +2241,29 @@ const MedicalInventoryStandardizer = () => {
               </div>
               <h3 className="text-2xl font-bold text-gray-900 mb-2">Merge Terms</h3>
               <p className="text-gray-600">Select the term to merge "{mergeTermData.sourceName}" into</p>
+              
+              {/* Help text for duplicate terms */}
+              {(() => {
+                let terms = [];
+                if (mergeTermData.type === 'deviceType') {
+                  const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+                  terms = selectedSystem?.deviceTypeTerms || [];
+                } else {
+                  terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+                }
+                
+                const duplicateCount = terms.filter(t => t.standard === mergeTermData.sourceName).length;
+                if (duplicateCount > 1) {
+                  return (
+                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-blue-700 text-sm">
+                        💡 Found {duplicateCount} terms with the same name. You can merge them to consolidate duplicates.
+                      </p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
             
             <div className="space-y-4">
@@ -2105,11 +2287,24 @@ const MedicalInventoryStandardizer = () => {
                     }
                     
                     return terms
-                      .filter(term => term.id !== mergeTermData.sourceId)
-                      .sort((a, b) => a.standard.localeCompare(b.standard))
+                      .filter(term => {
+                        // Don't show the source term itself
+                        if (term.id === mergeTermData.sourceId) return false;
+                        
+                        // For duplicate terms with same name, show them as merge targets
+                        // This allows merging "Sterivac 5XL" into another "Sterivac 5XL"
+                        return true;
+                      })
+                      .sort((a, b) => {
+                        // Sort by name first, then by ID for stable ordering
+                        const nameCompare = a.standard.localeCompare(b.standard);
+                        if (nameCompare !== 0) return nameCompare;
+                        return a.id - b.id;
+                      })
                       .map(term => (
                         <option key={term.id} value={term.id}>
                           {term.standard}
+                          {terms.filter(t => t.standard === term.standard).length > 1 ? ' (duplicate)' : ''}
                         </option>
                       ));
                   })()}
