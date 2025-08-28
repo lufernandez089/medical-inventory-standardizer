@@ -457,6 +457,23 @@ const MedicalInventoryStandardizer = () => {
         return reviewItem;
       }));
       
+      // Update review items to mark any subsequent items with the same value as already processed
+      // This prevents users from having to review the same term multiple times in the same session
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index > currentReviewIndex && 
+            reviewItem.field === item.field && 
+            reviewItem.originalValue === item.originalValue &&
+            !reviewItem.processed) {
+          return { 
+            ...reviewItem, 
+            processed: true, 
+            action: 'auto-matched', 
+            matchedTerm: { term: selectedMatch.term, score: 1.0, reason: 'Auto-matched from accepted suggestion' }
+          };
+        }
+        return reviewItem;
+      }));
+      
       // Move to next review
       if (currentReviewIndex < reviewItems.length - 1) {
         setCurrentReviewIndex(currentReviewIndex + 1);
@@ -542,6 +559,23 @@ const MedicalInventoryStandardizer = () => {
       setReviewItems(prev => prev.map((reviewItem, index) => {
         if (index === currentReviewIndex) {
           return { ...reviewItem, processed: true, action: 'added', newTerm };
+        }
+        return reviewItem;
+      }));
+      
+      // Update review items to mark any subsequent items with the same value as already processed
+      // This prevents users from having to add the same term multiple times in the same session
+      setReviewItems(prev => prev.map((reviewItem, index) => {
+        if (index > currentReviewIndex && 
+            reviewItem.field === item.field && 
+            reviewItem.originalValue === item.originalValue &&
+            !reviewItem.processed) {
+          return { 
+            ...reviewItem, 
+            processed: true, 
+            action: 'auto-matched', 
+            matchedTerm: { term: newTerm, score: 1.0, reason: 'Auto-matched from newly added term' }
+          };
         }
         return reviewItem;
       }));
@@ -666,6 +700,8 @@ const MedicalInventoryStandardizer = () => {
           result[`Status ${sourceCol}`] = 'Added as New Term';
         } else if (reviewItem && reviewItem.action === 'accepted') {
           result[`Status ${sourceCol}`] = 'Standardized';
+        } else if (reviewItem && reviewItem.action === 'auto-matched') {
+          result[`Status ${sourceCol}`] = 'Auto-Matched';
         } else if (matchedTerm) {
           result[`Status ${sourceCol}`] = 'Standardized';
         } else {
@@ -1737,6 +1773,10 @@ const MedicalInventoryStandardizer = () => {
                                               return <span className="text-orange-600 bg-orange-50 px-2 py-1 rounded-full text-xs">⏭️ Skipped</span>;
                                             } else if (status === 'No Match') {
                                               return <span className="text-red-600 bg-red-50 px-2 py-1 rounded-full text-xs">❌ No Match</span>;
+                                            } else if (status === 'Added as New Term') {
+                                              return <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-full text-xs">🆕 Added as New Term</span>;
+                                            } else if (status === 'Auto-Matched') {
+                                              return <span className="text-purple-600 bg-purple-50 px-2 py-1 rounded-full text-xs">🔄 Auto-Matched</span>;
                                             } else {
                                               return <span className="text-green-600 bg-green-50 px-2 py-1 rounded-full text-xs">✅ Standardized</span>;
                                             }
