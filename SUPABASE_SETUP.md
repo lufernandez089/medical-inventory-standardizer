@@ -1,119 +1,85 @@
 # Supabase Setup Guide
 
-## Environment Variables
+## Initial Setup
 
-Create a `.env` file in the root directory with the following variables:
-
-```bash
-# Supabase Configuration
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-
-# Admin Password (optional - defaults to 'TINCTester' if not set)
-VITE_ADMIN_PASSWORD=your_admin_password
-```
-
-## Database Schema
-
-The application expects the following Supabase tables:
-
-### nomenclature_systems
-- `id` (text, primary key)
-- `name` (text)
-- `description` (text)
-- `last_updated` (timestamp)
-
-### device_type_terms
-- `id` (uuid, primary key)
-- `system_id` (text, foreign key to nomenclature_systems.id)
-- `standard` (text)
-- `variations` (text[])
-
-### reference_terms
-- `id` (uuid, primary key)
-- `field` (text) - 'Manufacturer' or 'Model'
-- `standard` (text)
-- `variations` (text[])
-
-## Setup Steps
-
-1. Create a new Supabase project
-2. Create the tables with the schema above
-3. Set up Row Level Security (RLS) policies as needed
-4. Copy your project URL and anon key to the .env file
-5. Restart the development server
-
-## Row Level Security (RLS) Setup
-
-For MVP development, you can use the provided RLS policies that allow anonymous access:
-
-```sql
--- Run the contents of supabase/sql/mvp_open_policies.sql
--- This will enable RLS and create permissive policies for development
-```
-
-**⚠️ Security Warning**: These policies allow anyone to read/write to your database. 
-For production use, implement proper authentication and restrict access based on user roles.
-
-### Alternative: Manual RLS Setup
-
-If you prefer to set up RLS manually:
-
-1. Enable RLS on all tables:
-   ```sql
-   alter table nomenclature_systems enable row level security;
-   alter table device_type_terms enable row level security;
-   alter table reference_terms enable row level security;
+1. **Create a new Supabase project** at [supabase.com](https://supabase.com)
+2. **Get your project credentials**:
+   - Project URL (found in Settings > API)
+   - Anon/Public key (found in Settings > API)
+3. **Set environment variables** in your `.env.local` file:
+   ```
+   VITE_SUPABASE_URL=your_project_url
+   VITE_SUPABASE_ANON_KEY=your_anon_key
    ```
 
-2. Create policies that allow your anon key to access:
-   ```sql
-   create policy "anon access" on nomenclature_systems for all using (true) with check (true);
-   create policy "anon access" on device_type_terms for all using (true) with check (true);
-   create policy "anon access" on reference_terms for all using (true) with check (true);
-   ```
-## Fallback Behavior
+## Database Schema Setup
 
-If Supabase is not configured or fails to connect, the application will:
-- Show a warning message
-- Fall back to local hardcoded data
-- Continue functioning normally
+### Option 1: Run the complete schema (Recommended)
+1. Go to your Supabase dashboard
+2. Navigate to **SQL Editor**
+3. Copy and paste the contents of `supabase/sql/create_schema.sql`
+4. Click **Run** to execute the script
+
+### Option 2: Fix existing schema issues
+If you're getting errors about missing columns, run the fix scripts:
+
+1. **Fix variations column issue**:
+   - Copy and paste `supabase/sql/fix_schema.sql`
+   - Click **Run**
+
+2. **Fix updated_at column issue**:
+   - Copy and paste `supabase/sql/fix_updated_at_column.sql`
+   - Click **Run**
+
+## Row Level Security (RLS) Policies
+
+After creating the schema, apply the RLS policies:
+1. Copy and paste `supabase/sql/mvp_open_policies.sql`
+2. Click **Run**
+
+## Verify Setup
+
+1. **Check tables exist**: Go to **Table Editor** and verify you see:
+   - `nomenclature_systems`
+   - `device_type_terms`
+   - `reference_terms`
+
+2. **Test the app**: Your app should now work without the "updated_at column" error
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"Supabase Environment Variables Missing" Banner**
-   - Ensure `.env` file exists in project root
-   - Verify `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set
-   - Restart development server after adding `.env` file
+1. **"Could not find the 'updated_at' column" error**:
+   - Run `supabase/sql/fix_updated_at_column.sql` in SQL Editor
+   - This adds the missing column to your tables
 
-2. **"Error creating term" Messages**
-   - Check browser console for detailed error logs
-   - Verify RLS policies are set up correctly
-   - Ensure database tables exist with correct schema
-   - Check Supabase project status and API limits
+2. **"Could not find the 'variations' column" error**:
+   - Run `supabase/sql/fix_schema.sql` in SQL Editor
+   - This adds the missing variations column
 
-3. **Database Connection Failures**
-   - Verify Supabase project is active
-   - Check if anon key has correct permissions
-   - Ensure RLS policies allow anonymous access
-   - Check network connectivity to Supabase
+3. **Permission denied errors**:
+   - Ensure you've run `supabase/sql/mvp_open_policies.sql`
+   - Check that RLS is enabled on your tables
 
-### Debug Mode
+### Schema Verification
 
-The application now includes enhanced error logging. Check the browser console for:
-- Detailed Supabase error messages
-- Environment variable validation results
-- Database operation logs
-- Connectivity test results
+To verify your current schema, run this query in SQL Editor:
 
-### Testing Database Connectivity
-
-Use the built-in connectivity test:
-```javascript
-// In browser console
-import { canWriteToSupabase } from './src/lib/db.js';
-const result = await canWriteToSupabase();
-console.log(result);
+```sql
+SELECT 
+    table_name,
+    column_name,
+    data_type,
+    is_nullable
+FROM information_schema.columns 
+WHERE table_name IN ('nomenclature_systems', 'device_type_terms', 'reference_terms')
+ORDER BY table_name, ordinal_position;
 ```
+
+## Next Steps
+
+Once the database is set up correctly:
+1. Restart your development server (`npm run dev`)
+2. The app should now work without database errors
+3. You can add terms and variations successfully
