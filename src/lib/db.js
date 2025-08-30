@@ -328,6 +328,13 @@ export const appendVariationToReference = async (termId, variation) => {
     validateEnvVars();
 
     console.log(`Appending variation "${variation}" to reference term ID: ${termId}`);
+    console.log(`Variation details:`, {
+      value: variation,
+      type: typeof variation,
+      length: variation.length,
+      trimmed: variation.trim(),
+      split: variation.split(/\s+/)
+    });
 
     // Get current term
     const { data: term, error: getError } = await supabase
@@ -568,6 +575,241 @@ export const updateNomenclatureSystemTimestamp = async (systemId) => {
     return { success: true };
   } catch (error) {
     logSupabaseError('updateNomenclatureSystemTimestamp', error);
+    throw error;
+  }
+};
+
+// Update device type term (standard name and variations)
+export const updateDeviceTypeTerm = async (termId, standard, variations) => {
+  try {
+    validateEnvVars();
+
+    // Prepare update data without updated_at to avoid schema issues
+    const updateData = { 
+      standard,
+      variations
+    };
+
+    const { error } = await supabase
+      .from('device_type_terms')
+      .update(updateData)
+      .eq('id', termId);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    logSupabaseError('updateDeviceTypeTerm', error);
+    throw error;
+  }
+};
+
+// Update reference term (standard name and variations)
+export const updateReferenceTerm = async (termId, standard, variations) => {
+  try {
+    validateEnvVars();
+
+    const updateData = { 
+      standard,
+      variations
+    };
+
+    const { error } = await supabase
+      .from('reference_terms')
+      .update(updateData)
+      .eq('id', termId);
+
+    if (error) throw error;
+
+    return { success: true };
+  } catch (error) {
+    logSupabaseError('updateReferenceTerm', error);
+    throw error;
+  }
+};
+
+// Delete reference term (manufacturer or model)
+export const deleteReferenceTerm = async (termId) => {
+  try {
+    validateEnvVars();
+
+    const { error } = await supabase
+      .from('reference_terms')
+      .delete()
+      .eq('id', termId);
+
+    if (error) throw error;
+
+    console.log(`Successfully deleted reference term: ${termId}`);
+    return true;
+  } catch (error) {
+    logSupabaseError('deleteReferenceTerm', error);
+    throw error;
+  }
+};
+
+// Create new nomenclature system
+export const createNomenclatureSystem = async (name, description) => {
+  try {
+    validateEnvVars();
+
+    const { data, error } = await supabase
+      .from('nomenclature_systems')
+      .insert({
+        name: name.trim(),
+        description: description.trim(),
+        last_updated: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`Successfully created nomenclature system: ${name}`);
+    return {
+      id: data.id,
+      name: data.name,
+      description: data.description,
+      lastUpdated: data.last_updated
+    };
+  } catch (error) {
+    logSupabaseError('createNomenclatureSystem', error);
+    throw error;
+  }
+};
+
+// Update nomenclature system
+export const updateNomenclatureSystem = async (systemId, name, description) => {
+  try {
+    validateEnvVars();
+
+    const { data, error } = await supabase
+      .from('nomenclature_systems')
+      .update({
+        name: name.trim(),
+        description: description.trim(),
+        last_updated: new Date().toISOString()
+      })
+      .eq('id', systemId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    console.log(`Successfully updated nomenclature system: ${name}`);
+    return {
+      id: data.id,
+      name: data.name,
+      description: data.description,
+      lastUpdated: data.last_updated
+    };
+  } catch (error) {
+    logSupabaseError('updateNomenclatureSystem', error);
+    throw error;
+  }
+};
+
+// Delete nomenclature system
+export const deleteNomenclatureSystem = async (systemId) => {
+  try {
+    validateEnvVars();
+
+    // First, delete all device type terms in this system
+    const { error: deleteTermsError } = await supabase
+      .from('device_type_terms')
+      .delete()
+      .eq('system_id', systemId);
+
+    if (deleteTermsError) {
+      logSupabaseError('deleteNomenclatureSystem - delete terms', deleteTermsError);
+      throw deleteTermsError;
+    }
+
+    // Then delete the system itself
+    const { error: deleteSystemError } = await supabase
+      .from('nomenclature_systems')
+      .delete()
+      .eq('id', systemId);
+
+    if (deleteSystemError) {
+      logSupabaseError('deleteNomenclatureSystem - delete system', deleteSystemError);
+      throw deleteSystemError;
+    }
+
+    console.log(`Successfully deleted nomenclature system: ${systemId}`);
+    return true;
+  } catch (error) {
+    logSupabaseError('deleteNomenclatureSystem', error);
+    throw error;
+  }
+};
+
+// Bulk upload device type terms
+export const bulkUploadDeviceTypeTerms = async (systemId, terms) => {
+  try {
+    validateEnvVars();
+
+    let created = 0;
+    let updated = 0;
+    let errors = [];
+
+    for (const term of terms) {
+      try {
+        if (term.standard && term.standard.trim()) {
+          // Check if term already exists
+          const { data: existingTerm } = await supabase
+            .from('device_type_terms')
+            .select('id, variations')
+            .eq('system_id', systemId)
+            .eq('standard', term.standard.trim())
+            .single();
+
+          if (existingTerm) {
+            // Update existing term with new variations
+            const updatedVariations = [...new Set([
+              ...(existingTerm.variations || []),
+              ...(term.variations || [])
+            ])];
+
+            const { error: updateError } = await supabase
+              .from('device_type_terms')
+              .update({ 
+                variations: updatedVariations
+              })
+              .eq('id', existingTerm.id);
+
+            if (updateError) throw updateError;
+            updated++;
+          } else {
+            // Create new term
+            const { error: insertError } = await supabase
+              .from('device_type_terms')
+              .insert({
+                system_id: systemId,
+                standard: term.standard.trim(),
+                variations: term.variations || []
+              });
+
+            if (insertError) throw insertError;
+            created++;
+          }
+        }
+      } catch (termError) {
+        console.error(`Error processing term "${term.standard}":`, termError);
+        errors.push({
+          term: term.standard,
+          error: termError.message
+        });
+      }
+    }
+
+    // Update system timestamp
+    await updateNomenclatureSystemTimestamp(systemId);
+
+    console.log(`Bulk upload completed: ${created} created, ${updated} updated, ${errors.length} errors`);
+    return { created, updated, errors };
+  } catch (error) {
+    logSupabaseError('bulkUploadDeviceTypeTerms', error);
     throw error;
   }
 };
