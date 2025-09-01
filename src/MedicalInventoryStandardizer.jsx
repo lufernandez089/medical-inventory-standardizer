@@ -10,14 +10,13 @@ import {
   canWriteToSupabase,
   deleteDeviceTypeTerm,
   deleteReferenceTerm,
-  updateDeviceTypeTerm,
-  updateReferenceTerm,
   updateDeviceTypeTermVariations,
+  updateDeviceTypeTerm,
   updateNomenclatureSystemTimestamp,
+  bulkUploadDeviceTypeTerms,
   createNomenclatureSystem,
   updateNomenclatureSystem,
-  deleteNomenclatureSystem,
-  bulkUploadDeviceTypeTerms
+  deleteNomenclatureSystem
 } from './lib/db.js';
 
 const MedicalInventoryStandardizer = () => {
@@ -26,6 +25,19 @@ const MedicalInventoryStandardizer = () => {
   const [loadError, setLoadError] = useState(null);
   const [supabaseStatus, setSupabaseStatus] = useState({ configured: false, canWrite: false });
   const [isCreatingTerm, setIsCreatingTerm] = useState(false);
+  
+  // Additional loading states for better UX
+  const [isProcessingImport, setIsProcessingImport] = useState(false);
+  const [isAnalyzingData, setIsAnalyzingData] = useState(false);
+  const [isStandardizingData, setIsStandardizingData] = useState(false);
+  const [isBulkUploading, setIsBulkUploading] = useState(false);
+  const [isAddingSystem, setIsAddingSystem] = useState(false);
+  const [isEditingSystem, setIsEditingSystem] = useState(false);
+  const [isDeletingSystem, setIsDeletingSystem] = useState(false);
+  const [isAddingTerm, setIsAddingTerm] = useState(false);
+  const [isEditingTerm, setIsEditingTerm] = useState(false);
+  const [isDeletingTerm, setIsDeletingTerm] = useState(false);
+  const [isMergingTerms, setIsMergingTerms] = useState(false);
 
   // Default data (fallback)
   const defaultData = {
@@ -215,38 +227,16 @@ const MedicalInventoryStandardizer = () => {
       return;
     }
 
+    setIsProcessingImport(true);
+    
     try {
       const lines = importData.trim().split('\n');
-      
-      // First, try to detect if data is tab-separated or space-separated
-      const firstLine = lines[0];
-      const tabCount = (firstLine.match(/\t/g) || []).length;
-      const spaceCount = (firstLine.match(/\s{2,}/g) || []).length;
-      
-      let separator;
-      if (tabCount > 0) {
-        // Use tab separation (most reliable for structured data)
-        separator = '\t';
-        console.log('Using tab separation for data parsing');
-      } else if (spaceCount > 0) {
-        // Use multiple spaces as separator, but be more careful
-        separator = /\s{2,}/;
-        console.log('Using space separation for data parsing');
-      } else {
-        // Fallback to single space if no clear separator pattern
-        separator = ' ';
-        console.log('Using single space separation as fallback');
-      }
-      
-      const headers = lines[0].split(separator).map(h => h.trim());
-      console.log('Detected headers:', headers);
+      const headers = lines[0].split(/\t|\s{2,}/).map(h => h.trim());
       
       const data = [];
       for (let i = 1; i < lines.length; i++) {
         if (lines[i].trim()) {
-          const values = lines[i].split(separator).map(v => v.trim());
-          console.log(`Row ${i} values:`, values);
-          
+          const values = lines[i].split(/\t|\s{2,}/).map(v => v.trim());
           const row = { _rowIndex: i - 1 };
           headers.forEach((header, index) => {
             row[header] = values[index] || '';
@@ -276,6 +266,8 @@ const MedicalInventoryStandardizer = () => {
       showToast('Data loaded successfully', 'info');
     } catch (error) {
       showToast('Error processing data', 'error');
+    } finally {
+      setIsProcessingImport(false);
     }
   };
 
@@ -306,37 +298,37 @@ const MedicalInventoryStandardizer = () => {
     // Get current field terms (including newly added ones)
     const fieldTerms = getCurrentFieldTerms(targetField);
     const matches = [];
-    const originalNormalized = normalizeText(originalValue);
+    const originalLower = originalValue.toLowerCase().trim();
     
-    console.log(`🔍 findBestMatches: "${originalValue}" -> "${originalNormalized}" for field "${targetField}"`);
+    console.log(`🔍 findBestMatches: "${originalValue}" -> "${originalLower}" for field "${targetField}"`);
     console.log(`🔍 Available terms:`, fieldTerms.map(t => ({ standard: t.standard, variations: t.variations })));
     
-    if (originalNormalized.length < 2) return matches;
+    if (originalLower.length < 2) return matches;
     
     for (const term of fieldTerms) {
       let bestScore = 0;
       let bestReason = '';
       
-      const termStandardNormalized = normalizeText(term.standard);
-      console.log(`🔍 Checking term: "${term.standard}" -> "${termStandardNormalized}"`);
+      console.log(`🔍 Checking term: "${term.standard}" -> "${term.standard.toLowerCase()}"`);
       
       // 1. Exact matches (highest priority)
-      if (termStandardNormalized === originalNormalized) {
+      if (term.standard.toLowerCase() === originalLower) {
         console.log(`✅ EXACT MATCH FOUND: "${term.standard}" = "${originalValue}"`);
         matches.push({ term, score: 1.0, reason: 'Exact match' });
         continue;
       }
       
       // 2. Exact variation matches
-      const exactVariation = term.variations.find(v => normalizeText(v) === originalNormalized);
+      const exactVariation = term.variations.find(v => v.toLowerCase() === originalLower);
       if (exactVariation) {
         matches.push({ term, score: 1.0, reason: 'Exact variation match' });
         continue;
       }
       
       // 3. Contains match (original contains standard or vice versa)
-      if (termStandardNormalized.includes(originalNormalized) || originalNormalized.includes(termStandardNormalized)) {
-        const lengthRatio = Math.min(originalNormalized.length, termStandardNormalized.length) / Math.max(originalNormalized.length, termStandardNormalized.length);
+      const standardLower = term.standard.toLowerCase();
+      if (standardLower.includes(originalLower) || originalLower.includes(standardLower)) {
+        const lengthRatio = Math.min(originalLower.length, standardLower.length) / Math.max(originalLower.length, standardLower.length);
         const score = lengthRatio * 0.8;
         if (score > 0.4) {
           bestScore = Math.max(bestScore, score);
@@ -345,7 +337,7 @@ const MedicalInventoryStandardizer = () => {
       }
       
       // 4. Fuzzy string similarity using Levenshtein distance approximation
-      const similarity = calculateSimilarity(originalNormalized, termStandardNormalized);
+      const similarity = calculateSimilarity(originalLower, standardLower);
       if (similarity > 0.6) {
         const score = similarity * 0.7;
         if (score > bestScore) {
@@ -356,8 +348,8 @@ const MedicalInventoryStandardizer = () => {
       
       // 5. Check variations for fuzzy matches
       for (const variation of term.variations) {
-        const variationNormalized = normalizeText(variation);
-        const variationSimilarity = calculateSimilarity(originalNormalized, variationNormalized);
+        const variationLower = variation.toLowerCase();
+        const variationSimilarity = calculateSimilarity(originalLower, variationLower);
         if (variationSimilarity > 0.6) {
           const score = variationSimilarity * 0.65;
           if (score > bestScore) {
@@ -368,8 +360,8 @@ const MedicalInventoryStandardizer = () => {
       }
       
       // 6. Word-based similarity (for multi-word terms)
-      const originalWords = originalNormalized.split(/\s+/);
-      const standardWords = termStandardNormalized.split(/\s+/);
+      const originalWords = originalLower.split(/\s+/);
+      const standardWords = standardLower.split(/\s+/);
       const commonWords = originalWords.filter(word => 
         standardWords.some(sw => calculateSimilarity(word, sw) > 0.7)
       );
@@ -387,16 +379,6 @@ const MedicalInventoryStandardizer = () => {
     }
     
     return matches.sort((a, b) => b.score - a.score).slice(0, 8); // Show more matches
-  };
-
-  // Normalize text for search (remove accents, convert to lowercase)
-  const normalizeText = (text) => {
-    if (!text) return '';
-    return text
-      .normalize('NFD') // Decompose characters with accents
-      .replace(/[\u0300-\u036f]/g, '') // Remove diacritics (accents)
-      .toLowerCase()
-      .trim();
   };
 
   // Calculate string similarity (0-1 scale)
@@ -439,46 +421,57 @@ const MedicalInventoryStandardizer = () => {
       return;
     }
 
-    const reviewQueue = [];
+    setIsAnalyzingData(true);
 
-    importedRawData.forEach((row) => {
-      Object.entries(columnMapping).forEach(([sourceCol, targetField]) => {
-        const originalValue = row[sourceCol];
-        if (!originalValue || targetField === 'Reference Field') return;
+    // Use setTimeout to allow the UI to update with loading state
+    setTimeout(() => {
+      try {
+        const reviewQueue = [];
 
-        const matches = findBestMatches(originalValue, targetField);
-        const exactMatch = matches.find(match => match.score === 1.0);
-        
-        // Debug logging
-        console.log(`🔍 Analyzing "${originalValue}" for field "${targetField}":`, {
-          matches: matches.length,
-          exactMatch: exactMatch ? exactMatch.term.standard : null,
-          allMatches: matches.map(m => ({ term: m.term.standard, score: m.score, reason: m.reason }))
-        });
-        
-        if (!exactMatch) {
-          reviewQueue.push({
-            rowIndex: row._rowIndex,
-            field: targetField,
-            originalValue,
-            potentialMatches: matches,
-            processed: false,
-            action: null
+        importedRawData.forEach((row) => {
+          Object.entries(columnMapping).forEach(([sourceCol, targetField]) => {
+            const originalValue = row[sourceCol];
+            if (!originalValue || targetField === 'Reference Field') return;
+
+            const matches = findBestMatches(originalValue, targetField);
+            const exactMatch = matches.find(match => match.score === 1.0);
+            
+            // Debug logging
+            console.log(`🔍 Analyzing "${originalValue}" for field "${targetField}":`, {
+              matches: matches.length,
+              exactMatch: exactMatch ? exactMatch.term.standard : null,
+              allMatches: matches.map(m => ({ term: m.term.standard, score: m.score, reason: m.reason }))
+            });
+            
+            if (!exactMatch) {
+              reviewQueue.push({
+                rowIndex: row._rowIndex,
+                field: targetField,
+                originalValue,
+                potentialMatches: matches,
+                processed: false,
+                action: null
+              });
+            }
           });
-        }
-      });
-    });
+        });
 
-    if (reviewQueue.length === 0) {
-      standardizeData();
-    } else {
-      setReviewItems(reviewQueue);
-      setCurrentReviewIndex(0);
-      setCreateTerm(reviewQueue[0]?.originalValue || '');
-      setSearchTerm(''); // Reset search term for new review session
-      setActiveTab('review');
-      showToast(`${reviewQueue.length} terms need review`, 'info');
-    }
+        if (reviewQueue.length === 0) {
+          standardizeData();
+        } else {
+          setReviewItems(reviewQueue);
+          setCurrentReviewIndex(0);
+          setCreateTerm(reviewQueue[0]?.originalValue || '');
+          setSearchTerm(''); // Reset search term for new review session
+          setActiveTab('review');
+          showToast(`${reviewQueue.length} terms need review`, 'info');
+        }
+      } catch (error) {
+        showToast('Error analyzing data', 'error');
+      } finally {
+        setIsAnalyzingData(false);
+      }
+    }, 100);
   };
 
   // Review
@@ -507,47 +500,38 @@ const MedicalInventoryStandardizer = () => {
         console.log(`🔄 Adding new variation: "${item.originalValue}"`);
         
         setNomenclatureSystems(prev => {
-const updated = prev.map(system => 
-              system.id === activeNomenclatureSystem
-                ? { 
-                    ...system, 
-                    deviceTypeTerms: system.deviceTypeTerms.map(term => 
-                      term.id === selectedMatch.term.id
-                        ? { 
-                            ...term, 
-                            variations: [...new Set([
-                              ...term.variations.filter(v => v !== item.originalValue), // Remove if already exists
-                              item.originalValue
-                            ])]
-                          }
-                        : term
-                    ),
-                    lastUpdated: new Date().toISOString()
-                  }
-                : system
-            );
-            
-            // Capture the updated terms for immediate use
-            const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
-            updatedTerms = activeSystem?.deviceTypeTerms || [];
-            
-            console.log(`✅ Local state updated. New variations for term "${selectedMatch.term.standard}":`, 
-              updated.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms.find(t => t.id === selectedMatch.term.id)?.variations
-            );
-            
-            return updated;
-          });
+          const updated = prev.map(system => 
+            system.id === activeNomenclatureSystem
+              ? { 
+                  ...system, 
+                  deviceTypeTerms: system.deviceTypeTerms.map(term => 
+                    term.id === selectedMatch.term.id
+                      ? { 
+                          ...term, 
+                          variations: [...new Set([
+                            ...term.variations.filter(v => v !== item.originalValue), // Remove if already exists
+                            item.originalValue
+                          ])]
+                        }
+                      : term
+                  ),
+                  lastUpdated: new Date().toISOString()
+                }
+              : system
+          );
+          
+          // Capture the updated terms for immediate use
+          const activeSystem = updated.find(s => s.id === activeNomenclatureSystem);
+          updatedTerms = activeSystem?.deviceTypeTerms || [];
+          
+          console.log(`✅ Local state updated. New variations for term "${selectedMatch.term.standard}":`, 
+            updated.find(s => s.id === activeNomenclatureSystem)?.deviceTypeTerms.find(t => t.id === selectedMatch.term.id)?.variations
+          );
+          
+          return updated;
+        });
       } else {
         // Persist to database
-        console.log(`🔍 About to add variation to reference term:`, {
-          termId: selectedMatch.term.id,
-          originalValue: item.originalValue,
-          originalValueType: typeof item.originalValue,
-          originalValueLength: item.originalValue.length,
-          originalValueTrimmed: item.originalValue.trim(),
-          originalValueSplit: item.originalValue.split(/\s+/)
-        });
-        
         await appendVariationToReference(selectedMatch.term.id, item.originalValue);
         
         // Update local state and capture the updated terms
@@ -775,68 +759,78 @@ const updated = prev.map(system =>
   };
 
   const standardizeData = () => {
+    setIsStandardizingData(true);
     
-    const standardized = importedRawData.map(row => {
-      const result = { ...row };
-      delete result._rowIndex;
-      
-      Object.entries(columnMapping).forEach(([sourceCol, targetField]) => {
-        const originalValue = row[sourceCol];
+    // Use setTimeout to allow the UI to update with loading state
+    setTimeout(() => {
+      try {
+        const standardized = importedRawData.map(row => {
+          const result = { ...row };
+          delete result._rowIndex;
+          
+          Object.entries(columnMapping).forEach(([sourceCol, targetField]) => {
+            const originalValue = row[sourceCol];
+            
+            if (targetField === 'Reference Field') {
+              result[sourceCol] = originalValue || '';
+              return;
+            }
+            
+            if (!originalValue) {
+              result[`Original ${sourceCol}`] = '';
+              result[`Status ${sourceCol}`] = '';
+              return;
+            }
+            
+            // Get current field terms (including newly added ones)
+            const fieldTerms = getCurrentFieldTerms(targetField);
+            
+            let matchedTerm = null;
+            for (const term of fieldTerms) {
+              if (term.standard.toLowerCase() === originalValue.toLowerCase() ||
+                  term.variations.some(v => v.toLowerCase() === originalValue.toLowerCase())) {
+                matchedTerm = term;
+                break;
+              }
+            }
+            
+            result[`Original ${sourceCol}`] = originalValue;
+            result[`Standardized ${sourceCol}`] = matchedTerm ? matchedTerm.standard : originalValue;
+            
+            // Add status information based on review actions
+            const reviewItem = reviewItems.find(item => 
+              item.field === targetField && item.originalValue === originalValue
+            );
+            
+            if (reviewItem && reviewItem.action === 'skipped') {
+              result[`Status ${sourceCol}`] = 'Skipped';
+            } else if (reviewItem && reviewItem.action === 'added') {
+              result[`Status ${sourceCol}`] = 'Added as New Term';
+            } else if (reviewItem && reviewItem.action === 'accepted') {
+              result[`Status ${sourceCol}`] = 'Standardized';
+            } else if (reviewItem && reviewItem.action === 'auto-matched') {
+              result[`Status ${sourceCol}`] = 'Auto-Matched';
+            } else if (matchedTerm) {
+              result[`Status ${sourceCol}`] = 'Standardized';
+            } else {
+              result[`Status ${sourceCol}`] = 'No Match';
+            }
+          });
+          
+          return result;
+        });
         
-        if (targetField === 'Reference Field') {
-          result[sourceCol] = originalValue || '';
-          return;
-        }
-        
-        if (!originalValue) {
-          result[`Original ${sourceCol}`] = '';
-          result[`Standardized ${sourceCol}`] = '';
-          return;
-        }
-        
-        // Get current field terms (including newly added ones)
-        const fieldTerms = getCurrentFieldTerms(targetField);
-        
-        let matchedTerm = null;
-        for (const term of fieldTerms) {
-          if (normalizeText(term.standard) === normalizeText(originalValue) ||
-              term.variations.some(v => normalizeText(v) === normalizeText(originalValue))) {
-            matchedTerm = term;
-            break;
-          }
-        }
-        
-        result[`Original ${sourceCol}`] = originalValue;
-        result[`Standardized ${sourceCol}`] = matchedTerm ? matchedTerm.standard : originalValue;
-        
-        // Add status information based on review actions
-        const reviewItem = reviewItems.find(item => 
-          item.field === targetField && item.originalValue === originalValue
-        );
-        
-        if (reviewItem && reviewItem.action === 'skipped') {
-          result[`Status ${sourceCol}`] = 'Skipped';
-        } else if (reviewItem && reviewItem.action === 'added') {
-          result[`Status ${sourceCol}`] = 'Added as New Term';
-        } else if (reviewItem && reviewItem.action === 'accepted') {
-          result[`Status ${sourceCol}`] = 'Standardized';
-        } else if (reviewItem && reviewItem.action === 'auto-matched') {
-          result[`Status ${sourceCol}`] = 'Auto-Matched';
-        } else if (matchedTerm) {
-          result[`Status ${sourceCol}`] = 'Standardized';
-        } else {
-          result[`Status ${sourceCol}`] = 'No Match';
-        }
-      });
-      
-      return result;
-    });
-    
-    setProcessedData(standardized);
-    setReviewItems([]);
-    setCurrentReviewIndex(0);
-    setActiveTab('export');
-    showToast('Data standardized successfully!');
+        setProcessedData(standardized);
+        setReviewItems([]);
+        setCurrentReviewIndex(0);
+        setActiveTab('export');
+        showToast('Data standardized successfully!');
+      } catch (error) {
+        showToast('Error standardizing data', 'error');
+      } finally {
+        setIsStandardizingData(false);
+      }
+    }, 100);
   };
 
   // Admin functions
@@ -874,6 +868,8 @@ const updated = prev.map(system =>
       return;
     }
 
+    setIsAddingSystem(true);
+
     try {
       // Create in database
       const newSystem = await createNomenclatureSystem(
@@ -892,6 +888,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error creating system:', error);
       showToast(`Error creating system: ${error.message}`, 'error');
+    } finally {
+      setIsAddingSystem(false);
     }
   };
 
@@ -907,6 +905,8 @@ const updated = prev.map(system =>
       return;
     }
 
+    setIsAddingTerm(true);
+
     try {
       const variations = newTermData.variations
         .split(',')
@@ -914,17 +914,8 @@ const updated = prev.map(system =>
         .filter(v => v);
 
       if (addTermType === 'deviceType') {
-        // Add to database with all variations
-        const termId = await upsertDeviceTypeTerm(adminSelectedSystem, newTermData.standard.trim(), null);
-        
-        // If we have variations, add them one by one
-        if (variations.length > 0) {
-          for (const variation of variations) {
-            if (variation.trim()) {
-              await appendVariationToDeviceType(termId, variation.trim());
-            }
-          }
-        }
+        // Add to database
+        await upsertDeviceTypeTerm(adminSelectedSystem, newTermData.standard.trim(), variations[0] || null);
         
         // Refresh data from database
         const { nomenclatureSystems: freshSystems } = await loadCatalog();
@@ -932,18 +923,9 @@ const updated = prev.map(system =>
         
         showToast(`${newTermData.standard.trim()} added to ${nomenclatureSystems.find(s => s.id === adminSelectedSystem)?.name}!`, 'success');
       } else {
-        // Add to reference database with all variations
+        // Add to reference database
         const field = addTermType === 'manufacturer' ? 'Manufacturer' : 'Model';
-        const termId = await upsertReferenceTerm(field, newTermData.standard.trim(), null);
-        
-        // If we have variations, add them one by one
-        if (variations.length > 0) {
-          for (const variation of variations) {
-            if (variation.trim()) {
-              await appendVariationToReference(termId, variation.trim());
-            }
-          }
-        }
+        await upsertReferenceTerm(field, newTermData.standard.trim(), variations);
         
         // Refresh data from database
         const { referenceDB: freshReferenceDB } = await loadCatalog();
@@ -958,6 +940,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error adding term:', error);
       showToast(`Error adding term: ${error.message}`, 'error');
+    } finally {
+      setIsAddingTerm(false);
     }
   };
 
@@ -972,7 +956,7 @@ const updated = prev.map(system =>
     if (data.trim()) {
       try {
         const lines = data.trim().split('\n');
-        const headers = lines[0].split(/\t/).map(h => h.trim());
+        const headers = lines[0].split('\t').map(h => h.trim());
         
         // Auto-map columns based on content
         const mapping = {};
@@ -991,9 +975,9 @@ const updated = prev.map(system =>
         
         // Preview first few rows
         const preview = [];
-        for (let i = 1; i < Math.min(6, lines.length); i++) {
-          if (lines[i].trim()) {
-            const values = lines[i].split(/\t/).map(v => v.trim());
+                  for (let i = 1; i < Math.min(6, lines.length); i++) {
+            if (lines[i].trim()) {
+              const values = lines[i].split('\t').map(v => v.trim());
             const row = {};
             headers.forEach((header, index) => {
               row[header] = values[index] || '';
@@ -1018,14 +1002,16 @@ const updated = prev.map(system =>
       return;
     }
 
+    setIsBulkUploading(true);
+
     try {
       const lines = bulkUploadData.trim().split('\n');
-      const headers = lines[0].split(/\t/).map(h => h.trim());
+      const headers = lines[0].split('\t').map(h => h.trim());
       
       const terms = [];
       for (let i = 1; i < lines.length; i++) {
         if (lines[i].trim()) {
-          const values = lines[i].split(/\t/).map(v => v.trim());
+          const values = lines[i].split('\t').map(v => v.trim());
           const standard = values[headers.findIndex(h => bulkUploadColumnMapping[h] === 'standard')] || '';
           const variations = values[headers.findIndex(h => bulkUploadColumnMapping[h] === 'variations')] || '';
           
@@ -1067,15 +1053,8 @@ const updated = prev.map(system =>
         
         for (const term of terms) {
           try {
-            const termId = await upsertReferenceTerm(bulkUploadField, term.standard, null);
-            
-            // Add variations one by one
+            await upsertReferenceTerm(bulkUploadField, term.standard, term.variations);
             if (term.variations && term.variations.length > 0) {
-              for (const variation of term.variations) {
-                if (variation.trim()) {
-                  await appendVariationToReference(termId, variation.trim());
-                }
-              }
               updated++;
             } else {
               created++;
@@ -1104,6 +1083,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error submitting bulk upload:', error);
       showToast(`Error adding terms: ${error.message}`, 'error');
+    } finally {
+      setIsBulkUploading(false);
     }
   };
 
@@ -1122,6 +1103,8 @@ const updated = prev.map(system =>
       showToast('System name required', 'error');
       return;
     }
+
+    setIsEditingSystem(true);
 
     try {
       const nameExists = nomenclatureSystems.some(system => 
@@ -1151,6 +1134,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error updating system:', error);
       showToast(`Error updating system: ${error.message}`, 'error');
+    } finally {
+      setIsEditingSystem(false);
     }
   };
 
@@ -1164,6 +1149,8 @@ const updated = prev.map(system =>
   };
 
   const handleDeleteSystemConfirm = async () => {
+    setIsDeletingSystem(true);
+
     try {
       // Delete from database
       await deleteNomenclatureSystem(deleteSystemData.id);
@@ -1193,6 +1180,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error deleting system:', error);
       showToast(`Error deleting system: ${error.message}`, 'error');
+    } finally {
+      setIsDeletingSystem(false);
     }
   };
 
@@ -1216,6 +1205,8 @@ const updated = prev.map(system =>
       return;
     }
 
+    setIsEditingTerm(true);
+
     try {
       const variations = editTermData.variations
         .split(',')
@@ -1235,7 +1226,7 @@ const updated = prev.map(system =>
         showToast(`${editTermData.standard} updated!`, 'success');
       } else if (editTermData.type === 'manufacturer') {
         // Update in reference database
-        await updateReferenceTerm(editTermData.id, editTermData.standard.trim(), variations);
+        await upsertReferenceTerm('Manufacturer', editTermData.standard.trim(), variations);
         
         // Refresh data from database
         const { referenceDB: freshReferenceDB } = await loadCatalog();
@@ -1244,7 +1235,7 @@ const updated = prev.map(system =>
         showToast(`${editTermData.standard} updated!`, 'success');
       } else if (editTermData.type === 'model') {
         // Update in reference database
-        await updateReferenceTerm(editTermData.id, editTermData.standard.trim(), variations);
+        await upsertReferenceTerm('Model', editTermData.standard.trim(), variations);
         
         // Refresh data from database
         const { referenceDB: freshReferenceDB } = await loadCatalog();
@@ -1258,6 +1249,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error updating term:', error);
       showToast(`Error updating term: ${error.message}`, 'error');
+    } finally {
+      setIsEditingTerm(false);
     }
   };
 
@@ -1273,6 +1266,8 @@ const updated = prev.map(system =>
   const handleDeleteTermConfirm = async () => {
     const { id, type } = deleteTermData;
     
+    setIsDeletingTerm(true);
+
     try {
       if (type === 'deviceType') {
         // Delete from database
@@ -1308,6 +1303,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Error deleting term:', error);
       showToast(`Error deleting term: ${error.message}`, 'error');
+    } finally {
+      setIsDeletingTerm(false);
     }
   };
 
@@ -1369,6 +1366,8 @@ const updated = prev.map(system =>
   const handleMergeConfirm = async () => {
     const { source, target, type } = mergeConfirmData;
     
+    setIsMergingTerms(true);
+
     try {
       // Combine variations and remove duplicates
       // SOURCE keeps its name, TARGET name becomes a variation
@@ -1409,7 +1408,7 @@ const updated = prev.map(system =>
         // Handle manufacturer terms
         try {
           // Update source term with combined variations
-          await updateReferenceTerm(source.id, source.standard, combinedVariations);
+          await upsertReferenceTerm('Manufacturer', source.standard, combinedVariations);
           
           // Delete target term
           await deleteReferenceTerm(target.id);
@@ -1428,7 +1427,7 @@ const updated = prev.map(system =>
         // Handle model terms
         try {
           // Update source term with combined variations
-          await updateReferenceTerm(source.id, source.standard, combinedVariations);
+          await upsertReferenceTerm('Model', source.standard, combinedVariations);
           
           // Delete target term
           await deleteReferenceTerm(target.id);
@@ -1450,6 +1449,8 @@ const updated = prev.map(system =>
     } catch (error) {
       console.error('Failed to merge terms:', error);
       showToast(`Failed to merge terms: ${error.message}`, 'error');
+    } finally {
+      setIsMergingTerms(false);
     }
   };
 
@@ -1582,10 +1583,20 @@ const updated = prev.map(system =>
                   <div className="flex gap-3 mt-4">
                     <button
                       onClick={processImportData}
-                      className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
+                      disabled={isProcessingImport}
+                      className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
                     >
-                      <Upload size={20} />
-                      Load Data
+                      {isProcessingImport ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={20} />
+                          Load Data
+                        </>
+                      )}
                     </button>
                     <button
                       onClick={() => setImportData('')}
@@ -1652,11 +1663,20 @@ const updated = prev.map(system =>
 
                     <button
                       onClick={analyzeData}
-                      disabled={Object.keys(columnMapping).filter(k => columnMapping[k]).length === 0}
+                      disabled={Object.keys(columnMapping).filter(k => columnMapping[k]).length === 0 || isAnalyzingData}
                       className="mt-6 bg-gradient-to-r from-green-500 to-emerald-600 text-white px-8 py-3 rounded-xl hover:from-green-600 hover:to-emerald-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg transform hover:scale-105 transition-all duration-200"
                     >
-                      <Search size={20} />
-                      Analyze Data
+                      {isAnalyzingData ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <Search size={20} />
+                          Analyze Data
+                        </>
+                      )}
                     </button>
                   </div>
                 )}
@@ -1702,9 +1722,17 @@ const updated = prev.map(system =>
                         <h3 className="text-lg font-semibold text-gray-900">
                           Review Progress: {currentReviewIndex + 1} of {reviewItems.length}
                         </h3>
-                        <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
-                          {Math.round(((currentReviewIndex + 1) / reviewItems.length) * 100)}% Complete
-                        </span>
+                        <div className="flex items-center gap-3">
+                          {isCreatingTerm && (
+                            <div className="flex items-center gap-2 text-blue-600">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span className="text-sm">Processing...</span>
+                            </div>
+                          )}
+                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                            {Math.round(((currentReviewIndex + 1) / reviewItems.length) * 100)}% Complete
+                          </span>
+                        </div>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2">
                         <div 
@@ -1906,8 +1934,8 @@ const updated = prev.map(system =>
                                 // Filter by search term if provided
                                 const filteredTerms = searchTerm 
                                   ? terms.filter(term => 
-                                      normalizeText(term.standard).includes(normalizeText(searchTerm)) ||
-                                      term.variations.some(v => normalizeText(v).includes(normalizeText(searchTerm)))
+                                      term.standard.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                      term.variations.some(v => v.toLowerCase().includes(searchTerm.toLowerCase()))
                                     )
                                   : terms.slice(0, 10); // Show first 10 by default
                                 
@@ -1965,19 +1993,19 @@ const updated = prev.map(system =>
                           <div className="bg-white border-2 border-gray-300 rounded-xl p-6">
                             <h4 className="font-semibold text-gray-800 mb-4">Create New Standard Term</h4>
                             
-                            <div className="relative">
+                            <div className="relative mb-4">
                               <input
                                 type="text"
                                 placeholder="Enter new standard term..."
                                 value={createTerm}
                                 onChange={(e) => setCreateTerm(e.target.value)}
-                                className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent mb-4"
+                                className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                               />
                               {createTerm && (
                                 <button
                                   onClick={() => setCreateTerm('')}
                                   className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                                  title="Clear input"
+                                  title="Clear term"
                                 >
                                   <X size={16} />
                                 </button>
@@ -2238,13 +2266,23 @@ const updated = prev.map(system =>
                     <div className="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="text-xl font-semibold text-gray-900">Select Nomenclature System</h3>
-                        <button
-                          onClick={handleAddSystemClick}
-                          className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2"
-                        >
-                          <Plus size={16} />
-                          New System
-                        </button>
+                        <div className="flex items-center gap-3">
+                          {(isAddingSystem || isEditingSystem || isDeletingSystem) && (
+                            <div className="flex items-center gap-2 text-blue-600">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span className="text-sm">
+                                {isAddingSystem ? 'Adding...' : isEditingSystem ? 'Updating...' : 'Deleting...'}
+                              </span>
+                            </div>
+                          )}
+                          <button
+                            onClick={handleAddSystemClick}
+                            className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2"
+                          >
+                            <Plus size={16} />
+                            New System
+                          </button>
+                        </div>
                       </div>
                       
                       <div className="flex items-center gap-4">
@@ -2288,14 +2326,23 @@ const updated = prev.map(system =>
                         <h3 className="text-xl font-semibold text-gray-900">
                           Device Types - {nomenclatureSystems.find(s => s.id === adminSelectedSystem)?.name}
                         </h3>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => handleAddTermClick('deviceType')}
-                            className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2"
-                          >
-                            <Plus size={16} />
-                            Add Term
-                          </button>
+                        <div className="flex items-center gap-3">
+                          {(isAddingTerm || isEditingTerm || isDeletingTerm || isMergingTerms) && (
+                            <div className="flex items-center gap-2 text-blue-600">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span className="text-sm">
+                                {isAddingTerm ? 'Adding...' : isEditingTerm ? 'Updating...' : isDeletingTerm ? 'Deleting...' : 'Merging...'}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleAddTermClick('deviceType')}
+                              className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2"
+                            >
+                              <Plus size={16} />
+                              {isAddingTerm ? 'Adding...' : 'Add Term'}
+                            </button>
                           <button 
                             onClick={() => {
                               setBulkUploadType('deviceType');
@@ -2340,8 +2387,8 @@ const updated = prev.map(system =>
                           const deviceTypeTerms = currentSystem?.deviceTypeTerms || [];
                           const filteredTerms = deviceTypeTerms
                             .filter(term => 
-                              normalizeText(term.standard).includes(normalizeText(adminSearchTerms.deviceTypes)) ||
-                              term.variations.some(v => normalizeText(v).includes(normalizeText(adminSearchTerms.deviceTypes)))
+                              term.standard.toLowerCase().includes(adminSearchTerms.deviceTypes.toLowerCase()) ||
+                              term.variations.some(v => v.toLowerCase().includes(adminSearchTerms.deviceTypes.toLowerCase()))
                             )
                             .sort((a, b) => a.standard.localeCompare(b.standard));
 
@@ -2429,27 +2476,36 @@ const updated = prev.map(system =>
                             <option value="Model">🔧 Models ({referenceDB.Model?.length || 0})</option>
                           </select>
                         </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => handleAddTermClick(adminSearchTerms.selectedUniversalType?.toLowerCase() || 'manufacturer')}
-                            className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2"
-                          >
-                            <Plus size={16} />
-                            Add {adminSearchTerms.selectedUniversalType || 'Manufacturer'}
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setBulkUploadType(adminSearchTerms.selectedUniversalType?.toLowerCase() || 'manufacturer');
-                              setBulkUploadField(adminSearchTerms.selectedUniversalType || 'Manufacturer');
-                              handleBulkUploadClick();
-                            }}
-                            className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 flex items-center gap-2"
-                          >
-                            <Upload size={16} />
-                            Bulk Upload {adminSearchTerms.selectedUniversalType || 'Manufacturer'}s
-                          </button>
+                        <div className="flex items-center gap-3">
+                          {(isAddingTerm || isEditingTerm || isDeletingTerm || isMergingTerms) && (
+                            <div className="flex items-center gap-2 text-blue-600">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span className="text-sm">
+                                {isAddingTerm ? 'Adding...' : isEditingTerm ? 'Updating...' : isDeletingTerm ? 'Deleting...' : 'Merging...'}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleAddTermClick(adminSearchTerms.selectedUniversalType?.toLowerCase() || 'manufacturer')}
+                              className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 flex items-center gap-2"
+                            >
+                              <Plus size={16} />
+                              Add {adminSearchTerms.selectedUniversalType || 'Manufacturer'}
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setBulkUploadType(adminSearchTerms.selectedUniversalType?.toLowerCase() || 'manufacturer');
+                                setBulkUploadField(adminSearchTerms.selectedUniversalType || 'Manufacturer');
+                                handleBulkUploadClick();
+                              }}
+                              className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-lg hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 flex items-center gap-2"
+                            >
+                              <Upload size={16} />
+                              Bulk Upload {adminSearchTerms.selectedUniversalType || 'Manufacturer'}s
+                            </button>
+                          </div>
                         </div>
-                      </div>
                       
                       {/* Search Bar */}
                       <div className="mb-4">
@@ -2481,17 +2537,17 @@ const updated = prev.map(system =>
                           
                           const filteredTerms = terms
                             .filter(term => 
-                              !adminSearchTerms.universalSearch ||
-                              normalizeText(term.standard).includes(normalizeText(adminSearchTerms.universalSearch)) ||
-                              term.variations.some(v => normalizeText(v).includes(normalizeText(adminSearchTerms.universalSearch)))
+                              !adminSearchTerms.universalSearch || 
+                              term.standard.toLowerCase().includes(adminSearchTerms.universalSearch.toLowerCase()) ||
+                              term.variations.some(v => v.toLowerCase().includes(adminSearchTerms.universalSearch.toLowerCase()))
                             )
                             .sort((a, b) => a.standard.localeCompare(b.standard));
 
                           if (filteredTerms.length === 0) {
                             return (
                               <div className="text-center py-8 text-gray-500">
-                                {adminSearchTerms.universalSearch ?
-                                  `No ${selectedType.toLowerCase()}s found matching "${adminSearchTerms.universalSearch}"` :
+                                {adminSearchTerms.universalSearch ? 
+                                  `No ${selectedType.toLowerCase()}s found matching "${adminSearchTerms.universalSearch}"` : 
                                   `No ${selectedType.toLowerCase()}s found`
                                 }
                               </div>
@@ -2559,15 +2615,26 @@ const updated = prev.map(system =>
             </div>
             
             <div className="space-y-4">
-              <input
-                type="password"
-                value={adminPasswordInput}
-                onChange={(e) => setAdminPasswordInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleAdminPasswordSubmit()}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter admin password"
-                autoFocus
-              />
+              <div className="relative">
+                <input
+                  type="password"
+                  value={adminPasswordInput}
+                  onChange={(e) => setAdminPasswordInput(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAdminPasswordSubmit()}
+                  className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter admin password"
+                  autoFocus
+                />
+                {adminPasswordInput && (
+                  <button
+                    onClick={() => setAdminPasswordInput('')}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Clear password"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
               
               <div className="flex gap-3">
                 <button
@@ -2610,20 +2677,31 @@ const updated = prev.map(system =>
                   <button
                     onClick={() => setNewSystemData(prev => ({ ...prev, name: '' }))}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                    title="Clear input"
+                    title="Clear system name"
                   >
                     <X size={16} />
                   </button>
                 )}
               </div>
               
-              <textarea
-                value={newSystemData.description}
-                onChange={(e) => setNewSystemData(prev => ({ ...prev, description: e.target.value }))}
-                rows={3}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 resize-none"
-                placeholder="Description"
-              />
+              <div className="relative">
+                <textarea
+                  value={newSystemData.description}
+                  onChange={(e) => setNewSystemData(prev => ({ ...prev, description: e.target.value }))}
+                  rows={3}
+                  className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 resize-none"
+                  placeholder="Description"
+                />
+                {newSystemData.description && (
+                  <button
+                    onClick={() => setNewSystemData(prev => ({ ...prev, description: '' }))}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Clear description"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
               
               <div className="flex gap-3">
                 <button
@@ -2634,10 +2712,17 @@ const updated = prev.map(system =>
                 </button>
                 <button
                   onClick={handleAddSystemSubmit}
-                  disabled={!newSystemData.name.trim()}
+                  disabled={!newSystemData.name.trim() || isAddingSystem}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:cursor-not-allowed"
                 >
-                  Create
+                  {isAddingSystem ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create'
+                  )}
                 </button>
               </div>
             </div>
@@ -2667,20 +2752,31 @@ const updated = prev.map(system =>
                   <button
                     onClick={() => setEditSystemData(prev => ({ ...prev, name: '' }))}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                    title="Clear input"
+                    title="Clear system name"
                   >
                     <X size={16} />
                   </button>
                 )}
               </div>
               
-              <textarea
-                value={editSystemData.description}
-                onChange={(e) => setEditSystemData(prev => ({ ...prev, description: e.target.value }))}
-                rows={3}
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 resize-none"
-                placeholder="Description"
-              />
+              <div className="relative">
+                <textarea
+                  value={editSystemData.description}
+                  onChange={(e) => setEditSystemData(prev => ({ ...prev, description: e.target.value }))}
+                  rows={3}
+                  className="w-full px-4 py-3 pr-10 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 resize-none"
+                  placeholder="Description"
+                />
+                {editSystemData.description && (
+                  <button
+                    onClick={() => setEditSystemData(prev => ({ ...prev, description: '' }))}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    title="Clear description"
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
               
               <div className="flex gap-3">
                 <button
@@ -2691,7 +2787,7 @@ const updated = prev.map(system =>
                 </button>
                 <button
                   onClick={handleEditSystemSubmit}
-                  disabled={!editSystemData.name.trim()}
+                  disabled={!editSystemData.name.trim() || isEditingSystem}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:cursor-not-allowed"
                 >
                   Update
@@ -2726,12 +2822,20 @@ const updated = prev.map(system =>
               >
                 Cancel
               </button>
-              <button
-                onClick={handleDeleteSystemConfirm}
-                className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl hover:from-red-600 hover:to-red-700"
-              >
-                Delete System
-              </button>
+                              <button
+                  onClick={handleDeleteSystemConfirm}
+                  disabled={isDeletingSystem}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl hover:from-red-600 hover:to-red-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed"
+                >
+                  {isDeletingSystem ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete System'
+                  )}
+                </button>
             </div>
           </div>
         </div>
@@ -2761,7 +2865,7 @@ const updated = prev.map(system =>
                     <button
                       onClick={() => setEditTermData(prev => ({ ...prev, standard: '' }))}
                       className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                      title="Clear input"
+                      title="Clear term name"
                     >
                       <X size={16} />
                     </button>
@@ -2783,7 +2887,7 @@ const updated = prev.map(system =>
                     <button
                       onClick={() => setEditTermData(prev => ({ ...prev, variations: '' }))}
                       className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                      title="Clear input"
+                      title="Clear variations"
                     >
                       <X size={16} />
                     </button>
@@ -2835,12 +2939,20 @@ const updated = prev.map(system =>
               >
                 Cancel
               </button>
-              <button
-                onClick={handleDeleteTermConfirm}
-                className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl hover:from-red-600 hover:to-red-700"
-              >
-                Delete Term
-              </button>
+                              <button
+                  onClick={handleDeleteTermConfirm}
+                  disabled={isDeletingTerm}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl hover:from-red-600 hover:to-red-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed"
+                >
+                  {isDeletingTerm ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete Term'
+                  )}
+                </button>
             </div>
           </div>
         </div>
@@ -2892,12 +3004,12 @@ const updated = prev.map(system =>
                     type="text"
                     placeholder="Search for terms to merge into..."
                     value={mergeTermData.searchTerm || ''}
-                    onChange={(e) => setMergeTermData(prev => ({ ...prev, searchTerm: e.target.value, targetId: null }))}
-                    className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    onChange={(e) => setMergeTermData(prev => ({ ...prev, searchTerm: e.target.value }))}
+                    className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500"
                   />
                   {mergeTermData.searchTerm && (
                     <button
-                      onClick={() => setMergeTermData(prev => ({ ...prev, searchTerm: '', targetId: null }))}
+                      onClick={() => setMergeTermData(prev => ({ ...prev, searchTerm: '' }))}
                       className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                       title="Clear search"
                     >
@@ -2907,89 +3019,77 @@ const updated = prev.map(system =>
                 </div>
                 
                 {/* Search Results */}
-                {mergeTermData.searchTerm && (
-                  <div className="mt-3 max-h-48 overflow-y-auto border border-gray-200 rounded-lg">
-                    {(() => {
-                      let terms = [];
-                      if (mergeTermData.type === 'deviceType') {
-                        const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
-                        terms = selectedSystem?.deviceTypeTerms || [];
-                      } else {
-                        terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
-                      }
-                      
-                      const filteredTerms = terms
-                        .filter(term => {
-                          // Don't show the source term itself
-                          if (term.id === mergeTermData.sourceId) return false;
-                          
-                          // Filter by search term
-                          return normalizeText(term.standard).includes(normalizeText(mergeTermData.searchTerm)) ||
-                                 term.variations.some(v => normalizeText(v).includes(normalizeText(mergeTermData.searchTerm)));
-                        })
-                        .sort((a, b) => {
-                          // Sort by name first, then by ID for stable ordering
-                          const nameCompare = a.standard.localeCompare(b.standard);
-                          if (nameCompare !== 0) return nameCompare;
-                          return a.id - b.id;
-                        })
-                        .slice(0, 10); // Limit to 10 results
-                      
-                      if (filteredTerms.length === 0) {
-                        return (
-                          <div className="p-3 text-center text-gray-500 text-sm">
-                            No terms found matching "{mergeTermData.searchTerm}"
-                          </div>
-                        );
-                      }
-                      
-                      return filteredTerms.map(term => (
-                        <div
-                          key={term.id}
-                          onClick={() => setMergeTermData(prev => ({ 
-                            ...prev, 
-                            targetId: term.id,
-                            searchTerm: term.standard // Show selected term in search box
-                          }))}
-                          className={`p-3 cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
-                            mergeTermData.targetId === term.id ? 'bg-blue-50 border-blue-200' : ''
-                          }`}
-                        >
-                          <div className="font-medium text-gray-900">{term.standard}</div>
-                          {term.variations.length > 0 && (
-                            <div className="text-xs text-gray-500 mt-1">
-                              Variations: {term.variations.slice(0, 3).join(', ')}
-                              {term.variations.length > 3 && ` +${term.variations.length - 3} more`}
-                            </div>
-                          )}
-                          {terms.filter(t => t.standard === term.standard).length > 1 && (
-                            <div className="text-xs text-blue-600 mt-1 font-medium">(duplicate)</div>
-                          )}
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                )}
-                
-                {/* Selected Term Display */}
-                {mergeTermData.targetId && (
-                  <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                    <div className="text-sm font-medium text-green-800 mb-1">Selected for merge:</div>
-                    <div className="font-medium text-green-900">
-                      {(() => {
-                        let terms = [];
-                        if (mergeTermData.type === 'deviceType') {
-                          const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
-                          terms = selectedSystem?.deviceTypeTerms || [];
-                        } else {
-                          terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+                <div className="mt-3 max-h-48 overflow-y-auto space-y-2">
+                  {(() => {
+                    let terms = [];
+                    if (mergeTermData.type === 'deviceType') {
+                      // Get terms from the selected nomenclature system
+                      const selectedSystem = nomenclatureSystems.find(s => s.id === adminSelectedSystem);
+                      terms = selectedSystem?.deviceTypeTerms || [];
+                    } else {
+                      // Get terms from reference database
+                      terms = referenceDB[mergeTermData.type === 'manufacturer' ? 'Manufacturer' : 'Model'] || [];
+                    }
+                    
+                    const filteredTerms = terms
+                      .filter(term => {
+                        // Don't show the source term itself
+                        if (term.id === mergeTermData.sourceId) return false;
+                        
+                        // Filter by search term if provided
+                        if (mergeTermData.searchTerm) {
+                          return term.standard.toLowerCase().includes(mergeTermData.searchTerm.toLowerCase()) ||
+                                 term.variations.some(v => v.toLowerCase().includes(mergeTermData.searchTerm.toLowerCase()));
                         }
-                        const selectedTerm = terms.find(t => t.id === mergeTermData.targetId);
-                        return selectedTerm ? selectedTerm.standard : 'Unknown term';
-                      })()}
-                    </div>
-                  </div>
-                )}
+                        
+                        // Show first 10 terms if no search
+                        return true;
+                      })
+                      .sort((a, b) => {
+                        // Sort by name first, then by ID for stable ordering
+                        const nameCompare = a.standard.localeCompare(b.standard);
+                        if (nameCompare !== 0) return nameCompare;
+                        return a.id - b.id;
+                      })
+                      .slice(0, mergeTermData.searchTerm ? undefined : 10);
+
+                    if (filteredTerms.length === 0) {
+                      return (
+                        <div className="text-center py-4 text-gray-500 text-sm">
+                          {mergeTermData.searchTerm ? 
+                            `No terms found matching "${mergeTermData.searchTerm}"` : 
+                            'No terms available'
+                          }
+                        </div>
+                      );
+                    }
+
+                    return filteredTerms.map(term => (
+                      <div 
+                        key={term.id} 
+                        className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                          mergeTermData.targetId === term.id 
+                            ? 'border-purple-500 bg-purple-50' 
+                            : 'border-gray-200 hover:border-purple-300 hover:bg-purple-25'
+                        }`}
+                        onClick={() => setMergeTermData(prev => ({ ...prev, targetId: term.id }))}
+                      >
+                        <div className="font-medium text-gray-900">{term.standard}</div>
+                        {term.variations.length > 0 && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            Variations: {term.variations.slice(0, 3).join(', ')}
+                            {term.variations.length > 3 && ` +${term.variations.length - 3} more`}
+                          </div>
+                        )}
+                        {terms.filter(t => t.standard === term.standard).length > 1 && (
+                          <div className="text-xs text-purple-600 mt-1 font-medium">
+                            ⚠️ Duplicate term
+                          </div>
+                        )}
+                      </div>
+                    ));
+                  })()}
+                </div>
               </div>
               
               <div className="flex gap-3">
@@ -3062,12 +3162,20 @@ const updated = prev.map(system =>
               >
                 Cancel
               </button>
-              <button
-                onClick={handleMergeConfirm}
-                className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-xl hover:from-orange-600 hover:to-red-700"
-              >
-                Confirm Merge
-              </button>
+                              <button
+                  onClick={handleMergeConfirm}
+                  disabled={isMergingTerms}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-orange-500 to-red-600 text-white rounded-xl hover:from-orange-600 hover:to-red-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed"
+                >
+                  {isMergingTerms ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Merging...
+                    </>
+                  ) : (
+                    'Confirm Merge'
+                  )}
+                </button>
             </div>
           </div>
         </div>
@@ -3105,7 +3213,7 @@ const updated = prev.map(system =>
                     <button
                       onClick={() => handleBulkUploadDataChange('')}
                       className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
-                      title="Clear input"
+                      title="Clear data"
                     >
                       <X size={16} />
                     </button>
@@ -3177,7 +3285,14 @@ const updated = prev.map(system =>
                   disabled={!bulkUploadData.trim() || bulkUploadPreview.length === 0}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-300 disabled:cursor-not-allowed"
                 >
-                  Upload {bulkUploadPreview.length > 0 ? `(${bulkUploadPreview.length} terms)` : ''}
+                  {isBulkUploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Uploading...
+                    </>
+                  ) : (
+                    `Upload ${bulkUploadPreview.length > 0 ? `(${bulkUploadPreview.length} terms)` : ''}`
+                  )}
                 </button>
               </div>
             </div>
@@ -3207,7 +3322,7 @@ const updated = prev.map(system =>
                   <button
                     onClick={() => setNewTermData(prev => ({ ...prev, standard: '' }))}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                    title="Clear input"
+                    title="Clear term name"
                   >
                     <X size={16} />
                   </button>
@@ -3226,7 +3341,7 @@ const updated = prev.map(system =>
                   <button
                     onClick={() => setNewTermData(prev => ({ ...prev, variations: '' }))}
                     className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                    title="Clear input"
+                    title="Clear variations"
                   >
                     <X size={16} />
                   </button>
@@ -3245,9 +3360,37 @@ const updated = prev.map(system =>
                   disabled={!newTermData.standard.trim()}
                   className="flex-1 px-4 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl hover:from-green-600 hover:to-emerald-700 disabled:from-gray-300 disabled:cursor-not-allowed"
                 >
-                  Add Term
+                  {isAddingTerm ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Adding...
+                    </>
+                  ) : (
+                    'Add Term'
+                  )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay for Data Processing */}
+      {(isAnalyzingData || isStandardizingData) && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl text-center">
+            <Loader2 className="mx-auto h-16 w-16 animate-spin text-blue-500 mb-4" />
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">
+              {isAnalyzingData ? 'Analyzing Data...' : 'Standardizing Data...'}
+            </h3>
+            <p className="text-gray-600">
+              {isAnalyzingData 
+                ? 'Processing your data and finding potential matches...' 
+                : 'Applying standardization rules to your data...'
+              }
+            </p>
+            <div className="mt-4 w-full bg-gray-200 rounded-full h-2">
+              <div className="bg-blue-500 h-2 rounded-full animate-pulse" style={{ width: '100%' }}></div>
             </div>
           </div>
         </div>
